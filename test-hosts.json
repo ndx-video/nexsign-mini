@@ -1,0 +1,23 @@
+{
+  "192.168.1.101": {
+    "hostname": "Lobby-Display-1",
+    "ip_address": "192.168.1.101",
+    "anthias_version": "v2.1.0",
+    "anthias_status": "Running",
+    "dashboard_url": "http://192.168.1.101:8080"
+  },
+  "192.168.1.102": {
+    "hostname": "Meeting-Room-A",
+    "ip_address": "192.168.1.102",
+    "anthias_version": "v2.1.1",
+    "anthias_status": "Needs Attention",
+    "dashboard_url": "http://192.168.1.102:8080"
+  },
+  "192.168.1.103": {
+    "hostname": "Dev-Test-Box",
+    "ip_address": "192.168.1.103",
+    "anthias_version": "v2.0.0-dev",
+    "anthias_status": "Offline",
+    "dashboard_url": "http://192.168.1.103:8080"
+  }
+}
