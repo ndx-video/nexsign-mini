@@ -7,31 +7,32 @@ import (
 	"log"
 	"net/http"
 
-	"nexsign.mini/nsm/internal/ledger"
+	"nexsign.mini/nsm/internal/abci"
+	"nexsign.mini/nsm/internal/types"
 )
 
 // TemplateData holds the data to be passed to the HTML template.
 type TemplateData struct {
-	Hosts        map[string]ledger.Host
-	SelectedHost *ledger.Host
+	Hosts        map[string]types.Host
+	SelectedHost *types.Host
 }
 
 // Server is the web server for the dashboard and API.
 type Server struct {
-	state     *ledger.State
+	app       *abci.ABCIApplication
 	port      int
 	templates *template.Template
 }
 
 // NewServer creates a new web server.
-func NewServer(state *ledger.State, port int) (*Server, error) {
+func NewServer(app *abci.ABCIApplication, port int) (*Server, error) {
 	templates, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
 	return &Server{
-		state:     state,
+		app:       app,
 		port:      port,
 		templates: templates,
 	}, nil
@@ -44,10 +45,9 @@ func (s *Server) Start() {
 	fs := http.FileServer(http.Dir("internal/web/static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
-	http.HandleFunc("/", s.handlePageLoad) // Main page load
-	http.HandleFunc("/views/home", s.handleHomeView) // HTMX home view
-	http.HandleFunc("/views/host", s.handleHostView) // HTMX host view
-
+	http.HandleFunc("/", s.handlePageLoad)
+	http.HandleFunc("/views/home", s.handleHomeView)
+	http.HandleFunc("/views/host", s.handleHostView)
 	http.HandleFunc("/api/hosts", s.handleGetHosts)
 
 	addr := fmt.Sprintf(":%d", s.port)
@@ -58,7 +58,6 @@ func (s *Server) Start() {
 	}()
 }
 
-// handlePageLoad serves the main layout which then loads content via HTMX.
 func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	err := s.templates.ExecuteTemplate(w, "layout.html", nil)
@@ -68,9 +67,8 @@ func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHomeView serves the list of hosts for HTMX.
 func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
-	data := TemplateData{Hosts: s.state.Hosts}
+	data := TemplateData{Hosts: s.app.GetState()}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	err := s.templates.ExecuteTemplate(w, "home-view.html", data)
 	if err != nil {
@@ -79,11 +77,12 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHostView serves the iframe for a selected host for HTMX.
 func (s *Server) handleHostView(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
 	data := TemplateData{}
-	if host, ok := s.state.Hosts[hostID]; ok {
+
+	currentState := s.app.GetState()
+	if host, ok := currentState[hostID]; ok {
 		data.SelectedHost = &host
 	}
 
@@ -95,10 +94,9 @@ func (s *Server) handleHostView(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGetHosts provides the list of all known hosts as JSON.
 func (s *Server) handleGetHosts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.state.Hosts); err != nil {
+	if err := json.NewEncoder(w).Encode(s.app.GetState()); err != nil {
 		log.Printf("Error encoding hosts to JSON: %s", err)
 		http.Error(w, "Failed to retrieve host list", http.StatusInternalServerError)
 	}

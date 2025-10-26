@@ -6,6 +6,9 @@
 *.dylib
 nsm
 
+# Key files
+*.pem
+
 # Test binaries
 *.test
 

@@ -1,7 +1,7 @@
 package anthias
 
 import (
-	"nexsign.mini/nsm/internal/ledger"
+	"nexsign.mini/nsm/internal/types"
 )
 
 // Client is responsible for communicating with the local Anthias instance.
@@ -16,9 +16,9 @@ func NewClient() *Client {
 
 // GetMetadata fetches the metadata from the local Anthias instance.
 // For now, it returns mock data for development purposes.
-func (c *Client) GetMetadata() (*ledger.Host, error) {
+func (c *Client) GetMetadata() (*types.Host, error) {
 	// TODO: Replace this with actual API calls to a local Anthias service.
-	mockHost := &ledger.Host{
+	mockHost := &types.Host{
 		Hostname:       "anthias-dev-box",
 		IPAddress:      "127.0.0.1",
 		AnthiasVersion: "v2.0.0-mock",
