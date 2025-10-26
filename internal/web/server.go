@@ -41,7 +41,13 @@ func NewServer(state *ledger.State, port int) (*Server, error) {
 func (s *Server) Start() {
 	log.Printf("Web UI: Starting dashboard and API server on http://localhost:%d", s.port)
 
-	http.HandleFunc("/", s.handleDashboard)
+	fs := http.FileServer(http.Dir("internal/web/static"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
+
+	http.HandleFunc("/", s.handlePageLoad) // Main page load
+	http.HandleFunc("/views/home", s.handleHomeView) // HTMX home view
+	http.HandleFunc("/views/host", s.handleHostView) // HTMX host view
+
 	http.HandleFunc("/api/hosts", s.handleGetHosts)
 
 	addr := fmt.Sprintf(":%d", s.port)
@@ -52,23 +58,40 @@ func (s *Server) Start() {
 	}()
 }
 
-// handleDashboard renders the main dashboard page.
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	hostID := r.URL.Query().Get("host")
-
-	data := TemplateData{
-		Hosts: s.state.Hosts,
+// handlePageLoad serves the main layout which then loads content via HTMX.
+func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	err := s.templates.ExecuteTemplate(w, "layout.html", nil)
+	if err != nil {
+		log.Printf("Error executing layout template: %s", err)
+		http.Error(w, "Failed to render page", http.StatusInternalServerError)
 	}
+}
 
+// handleHomeView serves the list of hosts for HTMX.
+func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
+	data := TemplateData{Hosts: s.state.Hosts}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	err := s.templates.ExecuteTemplate(w, "home-view.html", data)
+	if err != nil {
+		log.Printf("Error executing home-view template: %s", err)
+		http.Error(w, "Failed to render view", http.StatusInternalServerError)
+	}
+}
+
+// handleHostView serves the iframe for a selected host for HTMX.
+func (s *Server) handleHostView(w http.ResponseWriter, r *http.Request) {
+	hostID := r.URL.Query().Get("host")
+	data := TemplateData{}
 	if host, ok := s.state.Hosts[hostID]; ok {
 		data.SelectedHost = &host
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err := s.templates.ExecuteTemplate(w, "index.html", data)
+	err := s.templates.ExecuteTemplate(w, "host-view.html", data)
 	if err != nil {
-		log.Printf("Error executing template: %s", err)
-		http.Error(w, "Failed to render page", http.StatusInternalServerError)
+		log.Printf("Error executing host-view template: %s", err)
+		http.Error(w, "Failed to render view", http.StatusInternalServerError)
 	}
 }
 

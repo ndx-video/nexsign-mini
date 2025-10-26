@@ -10,9 +10,9 @@ import (
 func parseTemplates() (*template.Template, error) {
 	// In a real application, you would embed the templates into the binary.
 	// For development, we'll read them from the filesystem.
-	templatePath := "."
+	templatePath := filepath.Join("internal", "web", "*.html")
 
-	tmpl, err := template.ParseFiles(filepath.Join(templatePath, "internal", "web", "index.html"))
+	tmpl, err := template.ParseGlob(templatePath)
 	if err != nil {
 		return nil, err
 	}

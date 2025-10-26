@@ -7,30 +7,27 @@ import (
 	"github.com/grandcat/zeroconf"
 )
 
-const (
-	// ServiceName is the unique identifier for the nsm service via mDNS.
-	ServiceName = "_nsm._tcp"
-)
-
 // DiscoveryService handles the mDNS registration and browsing.
 type DiscoveryService struct {
-	server *zeroconf.Server
+	server      *zeroconf.Server
+	serviceName string
 }
 
 // NewDiscoveryService creates a new mDNS discovery service.
-func NewDiscoveryService() (*DiscoveryService, error) {
-	// For now, we just instantiate the struct.
-	// The actual server will be started in the Start() method.
-	return &DiscoveryService{}, nil
+func NewDiscoveryService(serviceName string) (*DiscoveryService, error) {
+	return &DiscoveryService{
+		serviceName: serviceName,
+	}, nil
 }
 
 // Start registers the local nsm instance for discovery.
-func (s *DiscoveryService) Start() {
+func (s *DiscoveryService) Start() error {
 	hostname, _ := os.Hostname()
-	log.Printf("mDNS: Announcing service %s on the network from host %s", ServiceName, hostname)
+	log.Printf("mDNS: Announcing service %s on the network from host %s", s.serviceName, hostname)
 
 	// TODO: Implement the actual mDNS server initialization and registration.
 	// We will need to handle discovered peers and add them to our ledger.
+	return nil
 }
 
 // Stop gracefully shuts down the mDNS service.

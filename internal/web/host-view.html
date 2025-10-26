@@ -1,0 +1,19 @@
+{{if .SelectedHost}}
+<!-- This outer div is the target for the HTMX swap -->
+<div id="content-area" class="content">
+    <iframe name="anthias-frame" src="{{.SelectedHost.DashboardURL}}"></iframe>
+</div>
+
+<!-- This script updates the breadcrumb after the swap -->
+<script>
+    document.querySelector('.breadcrumbs').innerHTML = 
+        `<a hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
+         <span>/</span>
+         <a>{{ .SelectedHost.Hostname }}</a>`;
+</script>
+{{else}}
+<div id="content-area" class="content">
+    <h2>Host not found</h2>
+    <p>The requested host could not be found in the ledger.</p>
+</div>
+{{end}}

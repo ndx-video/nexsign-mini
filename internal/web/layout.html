@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>nexSign mini Dashboard</title>
+    <script src="/static/htmx.min.js" defer></script>
     <style>
         body, html {
             margin: 0;
@@ -34,6 +35,7 @@
             color: #007bff;
             text-decoration: none;
             padding: 8px 0;
+            cursor: pointer;
         }
         .breadcrumbs a:hover {
             text-decoration: underline;
@@ -41,11 +43,6 @@
         .breadcrumbs span {
             margin: 0 10px;
             color: #888;
-        }
-        .misc-menu a {
-            color: #333;
-            text-decoration: none;
-            padding: 8px 15px;
         }
         .content {
             flex-grow: 1;
@@ -74,6 +71,7 @@
         .host-list a {
             color: #007bff;
             text-decoration: none;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -81,47 +79,14 @@
 
     <nav class="top-nav">
         <div class="breadcrumbs">
-            <a href="/">Home</a>
-            {{if .SelectedHost}}
-                <span>/</span>
-                <a href="/?host={{.SelectedHost.IPAddress}}">{{ .SelectedHost.Hostname }}</a>
-            {{end}}
-        </div>
-        <div class="misc-menu">
-            <!-- Placeholder for future menu items -->
+            <a hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
+            <!-- Breadcrumb will be managed by the view templates -->
         </div>
     </nav>
 
-    <div class="content">
-        {{if .SelectedHost}}
-            <iframe name="anthias-frame" src="{{.SelectedHost.DashboardURL}}"></iframe>
-        {{else}}
-            <h2>Discovered Hosts</h2>
-            <div class="host-list">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Hostname</th>
-                            <th>IP Address</th>
-                            <th>Version</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .Hosts}}
-                        <tr>
-                            <td><a href="/?host={{.IPAddress}}">{{.Hostname}}</a></td>
-                            <td>{{.IPAddress}}</td>
-                            <td>{{.AnthiasVersion}}</td>
-                            <td>{{.AnthiasStatus}}</td>
-                            <td><a href="/api/hosts?host={{.IPAddress}}" target="_blank">API</a></td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
-            </div>
-        {{end}}
+    <!-- This is the main content area that HTMX will update -->
+    <div id="content-area" class="content" hx-get="/views/home" hx-trigger="load">
+        <!-- Initial content (like a loading spinner) could go here -->
     </div>
 
 </body>

@@ -1,0 +1,25 @@
+<h2>Discovered Hosts</h2>
+<div class="host-list">
+    <table>
+        <thead>
+            <tr>
+                <th>Hostname</th>
+                <th>IP Address</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Hosts}}
+            <tr>
+                <td><a hx-get="/views/host?host={{.IPAddress}}" hx-target="#content-area" hx-push-url="/?host={{.IPAddress}}">{{.Hostname}}</a></td>
+                <td>{{.IPAddress}}</td>
+                <td>{{.AnthiasVersion}}</td>
+                <td>{{.AnthiasStatus}}</td>
+                <td><a href="/api/hosts?host={{.IPAddress}}" target="_blank">API</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
