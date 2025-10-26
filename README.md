@@ -41,3 +41,19 @@ type Host struct {
     Status        string    `json:"status"`         // e.g., "Online", "Offline", "Rebooting"
     LastSeen      time.Time `json: "last_seen"`      // Timestamp of the last successful poll
 }
+```
+
+---
+
+## ⚖️ Licensing
+
+`nsm` is a dual-licensed project.
+
+* **Community Edition (Open Source):** Licensed under the **GPLv3** (see `LICENSE`). We chose the GPLv3 to ensure the project and its core remain open and free forever.
+* **Commercial License:** For businesses and use cases incompatible with the GPLv3 (e.g., closed-source applications, proprietary firmware), a commercial license is available from NDX Pty Ltd. See `COMMERCIAL-LICENSE.md` for details.
+
+### Contributing
+
+We welcome community contributions! Please note that all contributors are required to sign a **Contributor License Agreement (CLA)**. This is necessary to allow NDX Pty Ltd to offer the dual-license model that funds the project's long-term development.
+
+For more details, please see our `CONTRIBUTING.md` file.
