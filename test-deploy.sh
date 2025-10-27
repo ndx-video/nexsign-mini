@@ -13,7 +13,7 @@ set -e
 # 192.168.10.211  nsm04
 HOSTS=("nsm01" "nsm02" "nsm03" "nsm04")
 
-SSH_USER="devops" # The user created by cloud-init
+SSH_USER="snm" # The user created by cloud-init
 # IMPORTANT: Update this path to the location of the SSH private key
 # accessible from your WSL/Git Bash environment.
 SSH_KEY="/mnt/c/Users/Terence/.ssh/nsm-vbox.key"
