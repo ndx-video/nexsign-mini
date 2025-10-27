@@ -4,19 +4,14 @@
 set -e
 
 # --- Configuration ---
-# Define the hostnames of the target VMs.
-# IMPORTANT: These hostnames MUST be resolvable from where you run this script.
-# Add entries to your /etc/hosts file (in WSL or your Linux environment) like:
-# 192.168.10.147  nsm01
-# 192.168.10.174  nsm02
-# 192.168.10.135  nsm03
-# 192.168.10.211  nsm04
-HOSTS=("nsm01" "nsm02" "nsm03" "nsm04")
-
-SSH_USER="snm" # The user created by cloud-init
-# IMPORTANT: Update this path to the location of the SSH private key
-# accessible from your WSL/Git Bash environment.
-SSH_KEY="/mnt/c/Users/Terence/.ssh/nsm-vbox.key"
+# Source the deployment configuration.
+if [ -f "deploy.env" ]; then
+    source "deploy.env"
+else
+    echo "Deployment configuration file 'deploy.env' not found."
+    echo "Please create it based on the example in the README."
+    exit 1
+fi
 
 SOURCE_DIR="./bin" # Directory containing the compiled nsm binary (relative to script location)
 TARGET_BINARY="nsm" # Name of the binary file
