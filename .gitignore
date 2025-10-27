@@ -31,3 +31,6 @@ Thumbs.db
 
 # Environment
 .env
+
+# Code assist
+_prompt*

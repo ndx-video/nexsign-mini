@@ -40,3 +40,11 @@ You are an expert Go developer specializing in distributed systems and blockchai
 * **Resource Constraints:** Prioritize efficiency for SoC hardware.
 * **Modularity:** Keep components decoupled (discovery, consensus, web, identity).
 * **Dependencies:** Keep external dependencies to a minimum.
+
+## Markdown Style Guide
+
+- When editing any `.md` file, ensure it is markdown compliant for Github.
+- Use hyphens (`-`) for unordered lists.
+- Ensure consistent indentation for lists.
+- strip emphasis markers from all titles.
+- ensure semantic compliance with the first heading being a top level heading while the structural integrity of the heirachy is maintained.
