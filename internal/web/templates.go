@@ -1,3 +1,7 @@
+// Package web contains HTML templates and template helpers used by the web
+// server. Templates are kept local so the web dashboard can operate offline.
+// The files in this package are simple glue between static HTML assets and
+// the server-side data rendered into the dashboard.
 package web
 
 import (

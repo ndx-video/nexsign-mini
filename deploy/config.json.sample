@@ -1,0 +1,10 @@
+{
+  "key_file": "nsm_key.pem",
+  "host_data_file": "test-hosts.json",
+  "port": 8080,
+  "mdns_service_name": "_nsm._tcp",
+  "tendermint_peers_file": "tendermint_persistent_peers",
+  "log_file": "nsm.log",
+  "restart_command": "systemctl restart nsm",
+  "enable_actions": false
+}

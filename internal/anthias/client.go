@@ -1,3 +1,7 @@
+// Package anthias contains a small client used to query the local Anthias
+// digital-signage service for metadata and status. The Anthias client is used
+// by the main event loop to collect local host information which may then be
+// turned into signed StateTransactions and broadcast to the network.
 package anthias
 
 import (

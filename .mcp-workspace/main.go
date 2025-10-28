@@ -1,3 +1,8 @@
+// Minimal MCP scaffold server used during development and tests. This small
+// HTTP JSON-RPC server implements a minimal subset of the MCP (Model
+// Context Protocol) used by local tests: `/rpc` with `initialize` and a
+// `/ping` endpoint. The scaffold is intentionally tiny and is meant for
+// development integration testing rather than production use.
 package main
 
 import (

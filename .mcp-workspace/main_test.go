@@ -1,9 +1,12 @@
+// Tests for the minimal MCP scaffold in .mcp-workspace. These tests verify the
+// small JSON-RPC /rpc handler and the basic /ping readiness endpoints used by
+// local integration tests.
 package main
 
 import (
 	"bytes"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +18,7 @@ func TestPingHandler(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	res := w.Result()
-	body, _ := ioutil.ReadAll(res.Body)
+	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", res.StatusCode)
 	}
@@ -33,7 +36,7 @@ func TestRPCInitialize(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	res := w.Result()
-	body, _ := ioutil.ReadAll(res.Body)
+	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", res.StatusCode)
 	}

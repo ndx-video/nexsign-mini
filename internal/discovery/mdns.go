@@ -1,10 +1,13 @@
+// Package discovery implements local network discovery using mDNS (zeroconf).
+// It announces the local _nsm._tcp service and browses for other nsm
+// instances on the LAN. Discovered peers are stored in a thread-safe PeerStore
+// and can be used to seed Tendermint or provide peer information to the UI.
 package discovery
 
 import (
 	"context"
 	"log"
 	"os"
-	"sync"
 
 	"github.com/grandcat/zeroconf"
 )
@@ -14,8 +17,7 @@ type DiscoveryService struct {
 	serviceName string
 	resolver    *zeroconf.Resolver
 	server      *zeroconf.Server
-	peers       map[string]*zeroconf.ServiceEntry
-	mtx         sync.RWMutex
+	peerStore   *PeerStore
 	cancel      context.CancelFunc
 }
 
@@ -29,7 +31,7 @@ func NewDiscoveryService(serviceName string) (*DiscoveryService, error) {
 	return &DiscoveryService{
 		serviceName: serviceName,
 		resolver:    resolver,
-		peers:       make(map[string]*zeroconf.ServiceEntry),
+		peerStore:   NewPeerStore(),
 	}, nil
 }
 
@@ -53,15 +55,18 @@ func (s *DiscoveryService) browseForPeers() {
 	entries := make(chan *zeroconf.ServiceEntry)
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
-			s.mtx.Lock()
 			if entry.TTL == 0 {
 				log.Printf("mDNS: Peer removed: %s", entry.Instance)
-				delete(s.peers, entry.Instance)
+				s.peerStore.Remove(entry.Instance)
 			} else {
-				log.Printf("mDNS: Peer discovered: %s (%s:%d)", entry.Instance, entry.AddrIPv4[0], entry.Port)
-				s.peers[entry.Instance] = entry
+				if len(entry.AddrIPv4) > 0 {
+					log.Printf("mDNS: Peer discovered: %s (%s:%d)", entry.Instance, entry.AddrIPv4[0], entry.Port)
+				} else {
+					log.Printf("mDNS: Peer discovered: %s (no addr yet:%d)", entry.Instance, entry.Port)
+				}
+				s.peerStore.AddFromServiceEntry(entry)
 			}
-			s.mtx.Unlock()
+
 		}
 	}(entries)
 
@@ -76,16 +81,20 @@ func (s *DiscoveryService) browseForPeers() {
 	log.Println("mDNS: Peer browsing stopped.")
 }
 
-// GetPeers returns a thread-safe copy of the discovered peers.
-func (s *DiscoveryService) GetPeers() []*zeroconf.ServiceEntry {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-
-	peers := make([]*zeroconf.ServiceEntry, 0, len(s.peers))
-	for _, peer := range s.peers {
-		peers = append(peers, peer)
+// GetPeers returns a snapshot of discovered peers as Peer entries.
+func (s *DiscoveryService) GetPeers() []*Peer {
+	if s.peerStore == nil {
+		return nil
 	}
-	return peers
+	return s.peerStore.List()
+}
+
+// GetPeerAddresses returns host:port strings usable for seeding Tendermint
+func (s *DiscoveryService) GetPeerAddresses() []string {
+	if s.peerStore == nil {
+		return nil
+	}
+	return s.peerStore.Addresses()
 }
 
 // Stop gracefully shuts down the mDNS service.

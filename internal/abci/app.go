@@ -1,3 +1,9 @@
+// Package abci contains the ABCI application that connects our business logic
+// to the Tendermint consensus engine. It implements transaction validation
+// (CheckTx) and execution (DeliverTx) and maintains the in-memory ledger
+// state of known hosts. This component is the critical bridge between the
+// distributed consensus layer and the nsm domain logic: signatures are
+// validated here and state transitions are applied here.
 package abci
 
 import (
@@ -6,9 +12,9 @@ import (
 	"encoding/json"
 	"log"
 
+	abci "github.com/tendermint/tendermint/abci/types"
 	"nexsign.mini/nsm/internal/identity"
 	"nexsign.mini/nsm/internal/types"
-	abci "github.com/tendermint/tendermint/abci/types"
 )
 
 const (
@@ -21,9 +27,14 @@ const (
 // ABCIApplication implements the ABCI interface.
 type ABCIApplication struct {
 	abci.BaseApplication
-	state         map[string]types.Host
-	nodePrivKey   ed25519.PrivateKey
-	localPubKey   string
+	state       map[string]types.Host
+	nodePrivKey ed25519.PrivateKey
+	localPubKey string
+	// ActionHandler is an optional callback invoked when this node receives
+	// an ActionTransaction targeting the local node. Tests can inject a
+	// handler to observe or execute privileged actions instead of running
+	// system commands directly in library code.
+	ActionHandler func(action string, payload []byte) error
 }
 
 // NewABCIApplication creates a new ABCI application with a given initial state.
@@ -35,6 +46,7 @@ func NewABCIApplication(initialState map[string]types.Host, privKey ed25519.Priv
 		state:         initialState,
 		nodePrivKey:   privKey,
 		localPubKey:   identity.GetPublicKeyHex(privKey),
+		ActionHandler: nil,
 	}
 }
 
@@ -130,7 +142,14 @@ func (app *ABCIApplication) DeliverTx(req abci.RequestDeliverTx) abci.ResponseDe
 		}
 
 		if payload.TargetPublicKey == app.localPubKey {
-			log.Printf("INFO: Received and executing restart command for this node.")
+			log.Printf("INFO: Received restart command for this node.")
+			// If an ActionHandler is provided (useful for tests), call it instead
+			// of executing system-level restart commands here.
+			if app.ActionHandler != nil {
+				if err := app.ActionHandler("restart", tx.Payload); err != nil {
+					return abci.ResponseDeliverTx{Code: CodeTypeInvalidTx, Log: "action handler failed"}
+				}
+			}
 		} else {
 			log.Printf("INFO: Received restart command for different node (%s), ignoring.", payload.TargetPublicKey)
 		}

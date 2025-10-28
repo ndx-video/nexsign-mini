@@ -1,3 +1,8 @@
+// Package web implements the HTTP server and HTMX-backed dashboard for
+// nexSign mini. It serves templates and API endpoints that present the
+// distributed ledger's host list and provides UI-driven actions (e.g.
+// restart host) which are translated into signed transactions and
+// broadcast to the network.
 package web
 
 import (

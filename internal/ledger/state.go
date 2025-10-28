@@ -1,3 +1,7 @@
+// Package ledger provides a lightweight in-memory representation of the
+// replicated ledger state used by the nsm application. It defines the
+// State container that holds known hosts. The ABCI application will persist
+// and mutate this state in response to confirmed transactions.
 package ledger
 
 import "nexsign.mini/nsm/internal/types"

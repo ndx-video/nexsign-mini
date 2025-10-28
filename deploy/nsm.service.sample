@@ -1,0 +1,14 @@
+[Unit]
+Description=nexSign mini node
+After=network.target
+
+[Service]
+Type=simple
+User=nsm
+WorkingDirectory=/home/nsm/.nsm
+ExecStart=/home/nsm/.nsm/nsm
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
