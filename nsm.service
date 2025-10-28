@@ -1,0 +1,22 @@
+[Unit]
+Description=nexSign Mini Service
+After=network.target
+
+[Service]
+Type=simple
+User=nsm
+Group=nsm
+WorkingDirectory=/home/nsm/.nsm
+Environment=KEY_FILE=/home/nsm/.nsm/nsm_key.pem
+Environment=HOST_DATA_FILE=/home/nsm/.nsm/test-hosts.json
+Environment=PORT=8080
+Environment=MDNS_SERVICE_NAME=_nsm._tcp
+Environment=TEMPLATE_DIR=/home/nsm/.nsm/web
+StandardOutput=append:/home/nsm/.nsm/nsm.log
+StandardError=append:/home/nsm/.nsm/nsm.log
+ExecStart=/home/nsm/.nsm/nsm
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
