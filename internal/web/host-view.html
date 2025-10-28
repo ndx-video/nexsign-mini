@@ -7,13 +7,14 @@
 <!-- This script updates the breadcrumb after the swap -->
 <script>
     document.querySelector('.breadcrumbs').innerHTML = 
-        `<a hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
-         <span>/</span>
-         <a>{{ .SelectedHost.Hostname }}</a>`;
+        `<a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer" hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
+         <span class="text-desert-gray">/</span>
+         <span class="text-desert-tan py-2">{{ .SelectedHost.Hostname }}</span>`;
+    htmx.process(document.querySelector('.breadcrumbs'));
 </script>
 {{else}}
 <div id="content-area" class="content">
-    <h2>Host not found</h2>
-    <p>The requested host could not be found in the ledger.</p>
+    <h2 class="text-xl font-semibold text-desert-fg">Host not found</h2>
+    <p class="text-desert-tan">The requested host could not be found in the ledger.</p>
 </div>
 {{end}}
