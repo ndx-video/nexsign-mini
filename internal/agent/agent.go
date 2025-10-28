@@ -1,4 +1,3 @@
-package agent
 // Package agent provides a privileged helper process for executing sensitive
 // actions (such as restart) on behalf of the nsm node. This agent should run
 // with the necessary privileges and expose a local socket or HTTP endpoint.
