@@ -5,6 +5,7 @@
 *.so
 *.dylib
 nsm
+bin/
 
 # Key files
 *.pem
@@ -18,6 +19,12 @@ nsm
 
 # Log files
 *.log
+logs/
+
+# Tendermint data and temp files
+.tendermint*
+tendermint_persistent_peers
+*.sock
 
 # IDE / Editor specific
 .vscode/
