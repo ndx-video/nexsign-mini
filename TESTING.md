@@ -31,14 +31,13 @@ Quick examples
 Dry-run (no changes, just prints actions):
 
 ```bash
-./test-deploy.sh --dry-run --verbose --upload-hosts /etc/hosts
+./test-deploy.sh --dry-run --verbose
 ```
 
-Real deploy (uploads local `/etc/hosts`, runs smoke checks, 2 hosts in
-parallel):
+Real deploy (runs smoke checks, 2 hosts in parallel):
 
 ```bash
-./test-deploy.sh --verbose --smoke --mcp-check --parallel 2 --upload-hosts /etc/hosts
+./test-deploy.sh --verbose --smoke --mcp-check --parallel 2
 ```
 
 Monitoring the logfile in real time
