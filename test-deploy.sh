@@ -44,6 +44,12 @@ AUTO_INSTALL_GO=1
 MAX_RETRIES=3
 # RETRY_DELAY: Seconds to wait between retries
 RETRY_DELAY=2
+# WITH_TENDERMINT: If 1, deploy and configure Tendermint consensus
+WITH_TENDERMINT=0
+# TENDERMINT_VERSION: Version of Tendermint to install
+TENDERMINT_VERSION="0.35.9"
+# TENDERMINT_HOME: Remote Tendermint data directory
+TENDERMINT_HOME="/home/nsm/.tendermint"
 
 usage() {
     cat <<EOF
@@ -53,6 +59,7 @@ Options:
   --dry-run              Print commands without executing
   --verbose              Print verbose logs
   --with-service FILE    Install and start systemd service using FILE
+  --with-tendermint      Deploy and configure Tendermint consensus
   --parallel N           Deploy to N hosts in parallel (default: 1)
   --smoke               Run post-deploy health checks
   --mcp-check           Run MCP initialize check after deploy
@@ -70,6 +77,7 @@ while [[ ${#} -gt 0 ]]; do
             WITH_SERVICE=1
             SERVICE_FILE="$2"
             shift 2 ;;
+        --with-tendermint) WITH_TENDERMINT=1; shift ;;
         --parallel)
             PARALLEL="$2"
             shift 2 ;;
@@ -143,7 +151,8 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 # Helper function to copy files to remote hosts with automatic retry
 # Implements a robust file copy mechanism that:
-# - Uses SCP with retry logic for network resilience
+# - Uses rsync with retry logic for network resilience
+# - Supports compression and partial transfers
 # - Supports dry-run and verbose modes
 # - Disables strict host key checking for automated deployments
 # - Uses specified SSH key for authentication
@@ -160,13 +169,13 @@ scp_cmd() {
     local src="$1" dest="$2" retries=0
     while [ $retries -lt $MAX_RETRIES ]; do
         if [ "$DRY_RUN" -eq 1 ]; then
-            echo "DRY-RUN: scp -o StrictHostKeyChecking=no -i \"$SSH_KEY\" \"$src\" \"$dest\""
+            echo "DRY-RUN: rsync -az --partial -e \"ssh -o StrictHostKeyChecking=no -i $SSH_KEY\" \"$src\" \"$dest\""
             return 0
         fi
         if [ "$VERBOSE" -eq 1 ]; then
-            echo "+ scp -o StrictHostKeyChecking=no -i \"$SSH_KEY\" \"$src\" \"$dest\""
+            echo "+ rsync -az --partial -e \"ssh -o StrictHostKeyChecking=no -i $SSH_KEY\" \"$src\" \"$dest\""
         fi
-        if scp -o StrictHostKeyChecking=no -i "$SSH_KEY" "$src" "$dest"; then
+        if rsync -az --partial -e "ssh -o StrictHostKeyChecking=no -i $SSH_KEY" "$src" "$dest"; then
             return 0
         fi
         retries=$((retries + 1))
@@ -250,6 +259,77 @@ check_health() {
     return 1
 }
 
+# Helper function to install Tendermint on a remote host
+# Copies the local Tendermint binary to the remote host.
+#
+# Parameters:
+#   $1: Target hostname or IP
+#
+# Returns:
+#   0 on success, 1 on failure
+install_tendermint() {
+    local host="$1"
+    echo "Installing Tendermint $TENDERMINT_VERSION on $host..."
+    
+    # Check if local Tendermint binary exists
+    if [ ! -f "$SOURCE_DIR/tendermint" ]; then
+        echo "ERROR: Local Tendermint binary not found at $SOURCE_DIR/tendermint"
+        echo "Run: go install github.com/tendermint/tendermint/cmd/tendermint@v${TENDERMINT_VERSION} && cp ~/go/bin/tendermint $SOURCE_DIR/"
+        return 1
+    fi
+    
+    # Check if Tendermint is already installed and up to date
+    if ssh_cmd "$host" "command -v tendermint >/dev/null 2>&1"; then
+        local installed_version=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$SSH_USER@$host" "tendermint version 2>&1 | head -1")
+        echo "Tendermint already installed: $installed_version"
+        # Could add version comparison here if needed
+    fi
+    
+    # Copy Tendermint binary to remote host
+    echo "Copying Tendermint binary..."
+    scp_cmd "$SOURCE_DIR/tendermint" "$SSH_USER@$host:/tmp/tendermint" || return 1
+    
+    # Install to /usr/local/bin with sudo, or to ~/go/bin without
+    if ssh_cmd "$host" "sudo mv /tmp/tendermint /usr/local/bin/tendermint && sudo chmod +x /usr/local/bin/tendermint 2>/dev/null"; then
+        echo "Tendermint installed to /usr/local/bin/"
+    else
+        echo "No sudo access, installing to ~/go/bin/"
+        ssh_cmd "$host" "mkdir -p ~/go/bin && mv /tmp/tendermint ~/go/bin/tendermint && chmod +x ~/go/bin/tendermint" || return 1
+        ssh_cmd "$host" "grep -q 'export PATH=\$PATH:~/go/bin' ~/.bashrc || echo 'export PATH=\$PATH:~/go/bin' >> ~/.bashrc"
+    fi
+    
+    # Verify installation
+    local version=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$SSH_USER@$host" "tendermint version 2>&1 || ~/go/bin/tendermint version 2>&1" | head -1)
+    echo "Tendermint installed successfully: $version"
+    return 0
+}
+
+# Helper function to initialize Tendermint on a remote host
+# Creates the Tendermint configuration, genesis, and validator keys.
+#
+# Parameters:
+#   $1: Target hostname or IP
+#
+# Returns:
+#   0 on success, 1 on failure
+init_tendermint() {
+    local host="$1"
+    echo "Initializing Tendermint on $host..."
+    
+    # Initialize Tendermint (creates config, genesis, keys)
+    # Note: Tendermint v0.35.9 requires specifying node type (validator, full, or seed)
+    ssh_cmd "$host" "tendermint init validator --home $TENDERMINT_HOME" || return 1
+    
+    # Get node ID for this host
+    local node_id=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$SSH_USER@$host" "tendermint show-node-id --home $TENDERMINT_HOME")
+    echo "Node ID for $host: $node_id"
+    
+    # Store node_id globally for peer configuration
+    echo "$node_id" > "/tmp/node_id_${host}"
+    
+    return 0
+}
+
 # Main deployment function for installing NSM on a single host
 # This function handles the complete deployment process including:
 # - Creating directory structure
@@ -314,6 +394,14 @@ deploy_host() {
     fi
     if [ -f "test-hosts.json" ]; then
         scp_cmd "test-hosts.json" "$SSH_USER@$host:$REMOTE_NSM_DIR/" || return 1
+    fi
+
+    # --- Tendermint Installation and Configuration ---
+    # Install and configure Tendermint for consensus if enabled
+    if [ "$WITH_TENDERMINT" -eq 1 ]; then
+        echo "Setting up Tendermint on $host..."
+        install_tendermint "$host" || return 1
+        init_tendermint "$host" || return 1
     fi
 
     # --- Systemd Service Management ---
@@ -524,6 +612,79 @@ for pid in "${pids[@]}"; do
     # wait returns the exit status of the process
     wait "$pid" || failed=1
 done
+
+# --- Tendermint Post-Deployment Configuration ---
+# After all nodes are deployed, configure Tendermint peer connections
+# and start Tendermint on each node
+if [ "$WITH_TENDERMINT" -eq 1 ] && [ $failed -eq 0 ]; then
+    echo "========================================="
+    echo "Configuring Tendermint peer connections..."
+    echo "========================================="
+    
+    # Build persistent_peers list from all nodes
+    persistent_peers=""
+    for i in "${!HOSTS[@]}"; do
+        host="${HOSTS[$i]}"
+        if [ -f "/tmp/node_id_${host}" ]; then
+            node_id=$(cat "/tmp/node_id_${host}")
+            if [ -n "$persistent_peers" ]; then
+                persistent_peers="${persistent_peers},"
+            fi
+            persistent_peers="${persistent_peers}${node_id}@${host}:26656"
+        fi
+    done
+    
+    echo "Persistent peers: $persistent_peers"
+    
+    # Copy genesis from first node to all other nodes (must be identical)
+    echo "Synchronizing genesis.json across all nodes..."
+    first_host="${HOSTS[0]}"
+    
+    # Download genesis from first node
+    scp_cmd "$SSH_USER@$first_host:$TENDERMINT_HOME/config/genesis.json" "/tmp/genesis.json" || failed=1
+    
+    # Upload to all other nodes
+    for host in "${HOSTS[@]:1}"; do
+        echo "Copying genesis to $host..."
+        scp_cmd "/tmp/genesis.json" "$SSH_USER@$host:$TENDERMINT_HOME/config/genesis.json" || failed=1
+    done
+    
+    # Configure and start Tendermint on each node
+    for i in "${!HOSTS[@]}"; do
+        host="${HOSTS[$i]}"
+        node_num=$((i + 1))
+        p2p_port=$((26656 + i * 10))
+        rpc_port=$((26657 + i * 10))
+        abci_socket="unix:///home/nsm/.nsm/nsm.sock"
+        
+        echo "Starting Tendermint on $host (node $node_num)..."
+        echo "  P2P port: $p2p_port"
+        echo "  RPC port: $rpc_port"
+        echo "  ABCI socket: $abci_socket"
+        
+        # Update Tendermint config for unique ports
+        ssh_cmd "$host" "sed -i 's/laddr = \"tcp:\\/\\/127.0.0.1:26656\"/laddr = \"tcp:\\/\\/0.0.0.0:$p2p_port\"/' $TENDERMINT_HOME/config/config.toml" || failed=1
+        ssh_cmd "$host" "sed -i 's/laddr = \"tcp:\\/\\/127.0.0.1:26657\"/laddr = \"tcp:\\/\\/0.0.0.0:$rpc_port\"/' $TENDERMINT_HOME/config/config.toml" || failed=1
+        
+        # Set persistent peers (excluding self)
+        other_peers=$(echo "$persistent_peers" | sed "s/${node_id}@${host}:${p2p_port}//g" | sed 's/,,/,/g' | sed 's/^,//g' | sed 's/,$//g')
+        ssh_cmd "$host" "sed -i 's/persistent_peers = \"\"/persistent_peers = \"$other_peers\"/' $TENDERMINT_HOME/config/config.toml" || failed=1
+        
+        # Start Tendermint in background (using screen or nohup)
+        # Note: Tendermint v0.35.x uses --proxy-app (hyphen) not --proxy_app (underscore)
+        echo "Starting Tendermint node..."
+        ssh_cmd "$host" "nohup tendermint node --home $TENDERMINT_HOME --proxy-app=$abci_socket --p2p.laddr tcp://0.0.0.0:$p2p_port --rpc.laddr tcp://0.0.0.0:$rpc_port > $TENDERMINT_HOME/tendermint.log 2>&1 &" || failed=1
+        
+        sleep 2
+    done
+    
+    echo "Tendermint configuration complete."
+    echo "To check Tendermint status on a node:"
+    echo "  curl http://\${HOST}:26657/status"
+    echo ""
+    echo "To view Tendermint logs on a node:"
+    echo "  ssh $SSH_USER@\${HOST} tail -f $TENDERMINT_HOME/tendermint.log"
+fi
 
 # Provide final status and exit appropriately
 if [ $failed -eq 0 ]; then
