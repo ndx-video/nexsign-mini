@@ -13,11 +13,11 @@
         <tbody class="divide-y divide-desert-gray">
             {{range .Hosts}}
             <tr>
-                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" hx-get="/views/host?host={{.IPAddress}}" hx-target="#content-area" hx-push-url="/?host={{.IPAddress}}">{{.Hostname}}</a></td>
+                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" hx-get="/views/host?host={{.PublicKey}}" hx-target="#content-area" hx-push-url="/?host={{.PublicKey}}">{{.Hostname}}</a></td>
                 <td class="px-4 py-2 text-desert-tan">{{.IPAddress}}</td>
                 <td class="px-4 py-2 text-desert-tan">{{.AnthiasVersion}}</td>
                 <td class="px-4 py-2 text-desert-tan">{{.AnthiasStatus}}</td>
-                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" href="/api/hosts?host={{.IPAddress}}" target="_blank">API</a></td>
+                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" href="/api/hosts?host={{.PublicKey}}" target="_blank">API</a></td>
             </tr>
             {{end}}
         </tbody>
