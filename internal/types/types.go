@@ -16,11 +16,12 @@ import (
 
 // Host represents the state of a single Anthias host on the network.
 type Host struct {
-	Hostname       string `json:"hostname"`
-	IPAddress      string `json:"ip_address"`
-	AnthiasVersion string `json:"anthias_version"`
-	AnthiasStatus  string `json:"anthias_status"`
-	DashboardURL   string `json:"dashboard_url"`
+	Hostname       string    `json:"hostname"`
+	IPAddress      string    `json:"ip_address"`
+	AnthiasVersion string    `json:"anthias_version"`
+	AnthiasStatus  string    `json:"anthias_status"`
+	DashboardURL   string    `json:"dashboard_url"`
+	LastSeen       time.Time `json:"last_seen"`
 	// The hex-encoded public key of the node
 	PublicKey string `json:"public_key"`
 }

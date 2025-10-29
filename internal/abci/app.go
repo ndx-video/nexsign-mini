@@ -129,6 +129,7 @@ func (app *ABCIApplication) DeliverTx(req abci.RequestDeliverTx) abci.ResponseDe
 		}
 		if host, ok := app.state[signerPubKeyHex]; ok {
 			host.AnthiasStatus = payload.Status
+			host.LastSeen = payload.LastSeen
 			app.state[signerPubKeyHex] = host
 			log.Printf("INFO: Updated status for host %s to %s", host.Hostname, payload.Status)
 		} else {

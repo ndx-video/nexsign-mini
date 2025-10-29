@@ -49,7 +49,7 @@
     </nav>
 
     <!-- This is the main content area that HTMX will update -->
-    <div id="content-area" class="flex-1 p-4" hx-get="/views/home" hx-trigger="load">
+    <div id="content-area" class="flex-1 p-4" hx-get="/views/home" hx-trigger="load" hx-swap="innerHTML">
         <!-- Initial content (like a loading spinner) could go here -->
     </div>
 

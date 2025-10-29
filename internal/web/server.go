@@ -87,6 +87,10 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 	data := TemplateData{Hosts: s.app.GetState()}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
+
+	// Add current timestamp for client-side health calculation if needed
+	w.Header().Set("X-Server-Time", time.Now().Format(time.RFC3339))
+
 	err := s.templates.ExecuteTemplate(w, "home-view.html", data)
 	if err != nil {
 		log.Printf("Error executing home-view template: %s", err)

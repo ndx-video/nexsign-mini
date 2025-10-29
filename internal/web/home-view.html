@@ -1,5 +1,10 @@
 <h2 class="text-xl font-semibold mb-3 text-desert-fg">Discovered Hosts</h2>
-<div class="host-list">
+<div class="host-list" 
+     hx-get="/views/home" 
+     hx-trigger="every 3s" 
+     hx-swap="innerHTML"
+     hx-select=".host-list"
+     hx-target=".host-list">
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
         <thead>
             <tr class="bg-desert-gray text-left text-desert-tan text-sm">
@@ -12,11 +17,18 @@
         </thead>
         <tbody class="divide-y divide-desert-gray">
             {{range .Hosts}}
+            {{$health := healthStatus .}}
             <tr>
                 <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" hx-get="/views/host?host={{.PublicKey}}" hx-target="#content-area" hx-push-url="/?host={{.PublicKey}}">{{.Hostname}}</a></td>
                 <td class="px-4 py-2 text-desert-tan">{{.IPAddress}}</td>
                 <td class="px-4 py-2 text-desert-tan">{{.AnthiasVersion}}</td>
-                <td class="px-4 py-2 text-desert-tan">{{.AnthiasStatus}}</td>
+                <td class="px-4 py-2">
+                    <span class="inline-flex items-center gap-2">
+                        <span class="status-indicator {{healthColor $health}} w-2 h-2 rounded-full" title="{{healthDesc $health}}"></span>
+                        <span class="text-desert-tan">{{$health}}</span>
+                        <span class="text-xs text-desert-gray">({{timeSince .LastSeen}})</span>
+                    </span>
+                </td>
                 <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" href="/api/hosts?host={{.PublicKey}}" target="_blank">API</a></td>
             </tr>
             {{end}}
