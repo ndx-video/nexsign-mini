@@ -27,23 +27,100 @@ The `nsm` service is composed of several key components:
 
 ### Host Data Model
 
-The core data structure for each host stored in the ledger:
+The core data structure for each host stored in the ledger (mirrors `internal/types/Host`):
 
 ```go
 type Host struct {
-    PublicKey     string    `json:"public_key"`     // The node's unique, permanent ID
-    FriendlyName  string    `json:"friendly_name"`  // A user-editable alias (e.g., "Lobby TV")
-    IPAddress     string    `json:"ip_address"`     // The host's last known IP
-    MacAddress    string    `json:"mac_address"`    // The MAC address (for stable hardware ID)
-    Hostname      string    `json:"hostname"`       // OS hostname
-    AnthiasVersion string   `json:"anthias_version"`// Version of the local Anthias instance
-    NsmVersion    string    `json:"nsm_version"`    // Version of the nsm service itself
-    Status        string    `json:"status"`         // e.g., "Online", "Offline", "Rebooting"
-    LastSeen      time.Time `json: "last_seen"`      // Timestamp of the last successful poll
+    Hostname       string `json:"hostname"`
+    IPAddress      string `json:"ip_address"`
+    AnthiasVersion string `json:"anthias_version"`
+    AnthiasStatus  string `json:"anthias_status"`
+    DashboardURL   string `json:"dashboard_url"`
+    PublicKey      string `json:"public_key"` // hex-encoded ED25519 public key
 }
 ```
 
 ---
+
+## Quick start
+
+Prereqs
+
+- Linux native filesystem recommended (to avoid key-permission issues).
+- Go 1.21+ installed.
+- Tendermint Core v0.35.x installed and on PATH.
+
+Run the nsm ABCI app and web UI
+
+1) Start nsm (generates `nsm_key.pem` on first run and starts ABCI on `unix://nsm.sock`):
+
+   - `go run cmd/nsm/main.go`
+
+2) Initialize and start Tendermint in another terminal:
+
+   - `tendermint init --home $HOME/.tendermint`
+   - `tendermint node --home $HOME/.tendermint --proxy_app=unix://nsm.sock`
+
+3) Open the dashboard at http://localhost:8080 (override with `PORT` env var).
+
+Useful env vars
+
+- `KEY_FILE` (default `nsm_key.pem`)
+- `HOST_DATA_FILE` (default `test-hosts.json`)
+- `PORT` (default `8080`)
+- `MDNS_SERVICE_NAME` (default `_nsm._tcp`)
+- `ANTHIAS_POLL_INTERVAL_SECS` (default `30`)
+- `TENDERMINT_RPC` (default `http://localhost:26657`)
+
+## Broadcasting transactions
+
+Transactions are signed JSON and submitted to Tendermint RPC as base64-encoded bytes.
+
+High-level flow:
+
+- Build a `types.Transaction` (e.g., `TxUpdateStatus`).
+- Sign it with your node identity to get `types.SignedTransaction`.
+- Broadcast via `internal/tendermint.BroadcastClient`.
+
+Example (Go):
+
+```go
+id := identity.NewIdentity(privKey)
+bc := tendermint.NewBroadcastClient("http://localhost:26657")
+
+payload := types.UpdateStatusPayload{Status: "Online", LastSeen: time.Now()}
+payloadBytes, _ := json.Marshal(payload)
+
+tx := &types.Transaction{
+    Type:      types.TxUpdateStatus,
+    Timestamp: time.Now(),
+    Payload:   payloadBytes,
+}
+
+stx, _ := tx.Sign(id)
+hash, err := bc.BroadcastSignedTransaction(stx)
+if err != nil {
+    log.Fatalf("broadcast failed: %v", err)
+}
+log.Printf("tx hash: %s", hash)
+```
+
+Notes
+
+- Tendermint JSON-RPC expects the `tx` parameter to be base64, even if the payload itself is JSON. The included client handles this automatically.
+- For critical paths, use `BroadcastSignedTransactionCommit` to wait for inclusion in a block.
+
+## Anthias polling
+
+`nsm` includes a background poller that periodically:
+
+- Commits an `add_host` for this node (once, to register the signer), and
+- Broadcasts `update_status` when the local Anthias status changes.
+
+Knobs
+
+- `ANTHIAS_POLL_INTERVAL_SECS` controls the poll cadence.
+- `TENDERMINT_RPC` points to the Tendermint RPC endpoint (default `http://localhost:26657`).
 
 ## ⚖️ Licensing
 

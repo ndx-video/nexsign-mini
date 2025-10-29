@@ -37,11 +37,11 @@ This phase established node identity, local network discovery, and core data str
     - `SignedTransaction` with signature verification.
     - Type-specific payloads: `UpdateStatusPayload`, `RestartHostPayload`.
 
-- **[🟡] Tendermint Integration (Partial):**
+- **[🟡] Tendermint Integration (Updated):**
     - **[✅]** ABCI application implemented (`internal/abci`).
     - **[✅]** Peer addresses written to file for Tendermint config.
-    - **[⏳]** In-process Tendermint Core integration (pending).
-    - **[⏳]** Actual transaction broadcasting to Tendermint (pending).
+    - **[✅]** External Tendermint node connection via ABCI socket (`unix://nsm.sock`).
+    - **[✅]** Transaction broadcasting via Tendermint RPC (base64 `tx`) with client helper.
 
 ---
 
@@ -80,7 +80,8 @@ This phase implements the consensus layer and business logic.
     - **[🟡]** Package structure exists.
     - **[⏳]** Implement actual HTTP polling of local Anthias.
     - **[⏳]** Parse Anthias status and version.
-    - **[⏳]** Create and broadcast `TxUpdateStatus` on changes.
+    - **[✅]** Broadcast `TxUpdateStatus` on changes via integrated poller.
+    - **[✅]** Commit `TxAddHost` on first run to register signer.
 
 - **[⏳] Main Event Loop:**
     - **[⏳]** Periodic polling of local Anthias instance.
@@ -251,11 +252,10 @@ This phase adds persistence, advanced networking, and production-grade features.
 **Completed:** Phase 1, Phase 2, majority of Phase 3  
 **In Progress:** Phase 3 (Anthias client, event loop), Phase 4 (dashboard), Phase 5 (hardening)  
 **Next Priority:**
-1. Complete Tendermint in-process integration
-2. Implement Anthias polling and status broadcasting
-3. Add real-time dashboard updates
-4. Wire action buttons to transaction creation
-5. Add navigation menu and utility pages
+1. Replace dummy host list with ledger-sourced state in the UI
+2. Add real-time dashboard updates (HTMX polling or ws)
+3. Wire action buttons to transaction creation (restart via `TxRestartHost`)
+4. Navigation and utility pages
 
 **Lines of Code:** ~3,000+ (excluding tests and docs)  
 **Test Coverage:** 15 unit tests (identity, types, discovery, ABCI)  
