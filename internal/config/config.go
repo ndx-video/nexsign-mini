@@ -31,7 +31,7 @@ func LoadConfig(path string) (*Config, error) {
 	// sensible defaults
 	def := &Config{
 		KeyFile:             "nsm_key.pem",
-		HostDataFile:        "test-hosts.json",
+		HostDataFile:        "",
 		Port:                8080,
 		MDNSServiceName:     "_nsm._tcp",
 		TendermintPeersFile: "tendermint_persistent_peers",
