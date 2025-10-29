@@ -21,6 +21,9 @@ bin/
 *.log
 logs/
 
+# Local debug/test artifacts
+test_broadcast_bin
+
 # Tendermint data and temp files
 .tendermint*
 tendermint_persistent_peers
