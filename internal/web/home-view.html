@@ -43,6 +43,9 @@
                         {{if eq .Status "healthy"}}
                         <span class="w-2 h-2 rounded-full bg-green-500" title="Healthy"></span>
                         <span class="text-green-400">Healthy</span>
+                        {{else if eq .Status "stale"}}
+                        <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
+                        <span class="text-purple-400">Stale</span>
                         {{else if eq .Status "unhealthy"}}
                         <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
                         <span class="text-yellow-400">Unhealthy</span>

@@ -15,6 +15,7 @@ const (
 	StatusConnectionRefused HostStatus = "connection_refused"
 	StatusUnhealthy         HostStatus = "unhealthy"
 	StatusHealthy           HostStatus = "healthy"
+	StatusStale             HostStatus = "stale" // NSM binary needs updating (apt update && apt upgrade)
 )
 
 // AnthiasCMSStatus represents the status of the Anthias CMS

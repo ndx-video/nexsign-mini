@@ -88,6 +88,14 @@ func (s *Store) CheckAllHosts() {
 	hosts := s.GetAll()
 
 	for i := range hosts {
+		// Preserve manually set "stale" status
+		if hosts[i].Status == types.StatusStale {
+			// Still check CMS status even for stale hosts
+			checkAnthiasCMS(&hosts[i])
+			hosts[i].LastChecked = time.Now()
+			continue
+		}
+
 		hosts[i].Status = CheckHealth(&hosts[i])
 		hosts[i].LastChecked = time.Now()
 	}
