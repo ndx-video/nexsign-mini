@@ -63,6 +63,7 @@ func (s *Server) Start() {
 
 	// API routes
 	http.HandleFunc("/api/health", s.handleHealth)
+	http.HandleFunc("/api/version", s.handleVersion)
 	http.HandleFunc("/api/hosts", s.handleGetHosts)
 	http.HandleFunc("/api/hosts/add", s.handleAddHost)
 	http.HandleFunc("/api/hosts/update", s.handleUpdateHost)
@@ -71,6 +72,7 @@ func (s *Server) Start() {
 	http.HandleFunc("/api/hosts/push", s.handlePushHosts)
 	http.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
 	http.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
+	http.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	go func() {
@@ -106,6 +108,15 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleVersion returns the current NSM version
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version": types.Version,
+		"status":  "ok",
+	})
 }
 
 func (s *Server) handleGetHosts(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +395,92 @@ func (s *Server) handleRebootHost(w http.ResponseWriter, r *http.Request) {
 	resp, err := http.Post(targetURL, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		log.Printf("Failed to forward reboot request to %s: %v", req.TargetIP, err)
+		http.Error(w, "Failed to reach target host", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Forward the response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handleUpgradeHost handles package upgrade requests for hosts
+func (s *Server) handleUpgradeHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get the target IP and origin from request
+	var req struct {
+		TargetIP string `json:"target_ip"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetIP == "" {
+		http.Error(w, "target_ip is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the origin IP from the request
+	originIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(originIP); err == nil {
+		originIP = host
+	}
+
+	// If the target is localhost, execute the upgrade
+	localHost, err := s.anthias.GetMetadata()
+	if err != nil {
+		log.Printf("Error getting local metadata: %v", err)
+		http.Error(w, "Failed to determine local host", http.StatusInternalServerError)
+		return
+	}
+
+	if req.TargetIP == localHost.IPAddress || req.TargetIP == "127.0.0.1" {
+		// This is an upgrade request for THIS host
+		log.Printf("UPGRADE REQUEST received from %s for local host %s", originIP, req.TargetIP)
+
+		// Execute the upgrade sequence
+		go func() {
+			log.Println("Initiating package upgrade sequence...")
+			log.Println("Step 1: Running apt update...")
+
+			// Run apt update
+			if err := exec.Command("apt", "update").Run(); err != nil {
+				log.Printf("Warning: Failed to run apt update: %v", err)
+			}
+
+			log.Println("Step 2: Running apt upgrade...")
+
+			// Run apt upgrade -y
+			if err := exec.Command("apt", "upgrade", "-y").Run(); err != nil {
+				log.Printf("Error: Failed to run apt upgrade: %v", err)
+			}
+
+			log.Println("Package upgrade complete. Service will restart if nsm was updated.")
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "upgrading",
+			"message": "Package upgrade initiated",
+		})
+		return
+	}
+
+	// Forward the upgrade request to the target host
+	targetURL := fmt.Sprintf("http://%s:8080/api/hosts/upgrade", req.TargetIP)
+	reqBody, _ := json.Marshal(req)
+
+	resp, err := http.Post(targetURL, "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		log.Printf("Failed to forward upgrade request to %s: %v", req.TargetIP, err)
 		http.Error(w, "Failed to reach target host", http.StatusServiceUnavailable)
 		return
 	}

@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// Version is the current version of NSM
+const Version = "0.1.0"
+
 // HostStatus represents the current health/reachability status of a host
 type HostStatus string
 
@@ -32,7 +35,8 @@ const (
 type Host struct {
 	IPAddress      string           `json:"ip_address"`      // Required: IP address of the host
 	Hostname       string           `json:"hostname"`        // Optional: friendly name for the host
-	Status         HostStatus       `json:"status"`          // Health status: unreachable, connection_refused, unhealthy, healthy
+	Status         HostStatus       `json:"status"`          // Health status: unreachable, connection_refused, unhealthy, healthy, stale
+	NSMVersion     string           `json:"nsm_version"`     // Detected NSM version
 	AnthiasVersion string           `json:"anthias_version"` // Detected Anthias version
 	AnthiasStatus  string           `json:"anthias_status"`  // Anthias service status (online, offline, unknown)
 	CMSStatus      AnthiasCMSStatus `json:"cms_status"`      // Anthias CMS status (CMS Online, CMS Offline, CMS Unknown)

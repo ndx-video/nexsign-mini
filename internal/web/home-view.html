@@ -7,13 +7,18 @@
      hx-select=".host-list"
      hx-target=".host-list">
     
-    <div class="mb-4">
+    <div class="mb-4 flex items-center gap-4">
         <button 
+            id="check-hosts-btn"
             class="bg-desert-cyan hover:bg-desert-yellow text-desert-darkgray px-4 py-2 rounded"
             hx-post="/api/hosts/check"
-            hx-swap="none">
+            hx-swap="none"
+            onclick="resetCountdown()">
             🔄 Check All Hosts
         </button>
+        <span class="text-desert-tan text-sm">
+            Auto-refresh in <span id="countdown" class="font-bold text-desert-cyan">10</span>s
+        </span>
     </div>
 
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
@@ -21,8 +26,8 @@
             <tr class="bg-desert-gray text-left text-desert-tan text-sm">
                 <th class="px-4 py-3">IP Address</th>
                 <th class="px-4 py-3">Hostname</th>
-                <th class="px-4 py-3">Status</th>
-                <th class="px-4 py-3">Anthias</th>
+                <th class="px-4 py-3">NSM Dash</th>
+                <th class="px-4 py-3">Anthias Dash</th>
                 <th class="px-4 py-3">Last Checked</th>
                 <th class="px-4 py-3">Actions</th>
             </tr>
@@ -45,10 +50,22 @@
                         <span class="text-green-400">Healthy</span>
                         {{else if eq .Status "stale"}}
                         <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
-                        <span class="text-purple-400">Stale</span>
+                        <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
+                                hx-post="/api/hosts/upgrade"
+                                hx-vals='{"target_ip":"{{.IPAddress}}"}'
+                                hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.IPAddress}}?"
+                                hx-swap="none">
+                            Stale
+                        </button>
                         {{else if eq .Status "unhealthy"}}
                         <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
-                        <span class="text-yellow-400">Unhealthy</span>
+                        <button class="text-yellow-400 hover:text-yellow-300 underline cursor-pointer"
+                                hx-post="/api/hosts/upgrade"
+                                hx-vals='{"target_ip":"{{.IPAddress}}"}'
+                                hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.IPAddress}}?"
+                                hx-swap="none">
+                            Unhealthy
+                        </button>
                         {{else if eq .Status "connection_refused"}}
                         <span class="w-2 h-2 rounded-full bg-orange-500" title="Connection Refused"></span>
                         <span class="text-orange-400">Connection Refused</span>
@@ -183,6 +200,47 @@ function closeAnthiasDashboard() {
     viewer.classList.add('hidden');
     iframe.src = '';
 }
+
+// Countdown timer for auto-refresh
+let countdownValue = 10;
+let countdownInterval;
+
+function startCountdown() {
+    const countdownElement = document.getElementById('countdown');
+    const checkButton = document.getElementById('check-hosts-btn');
+    
+    countdownInterval = setInterval(() => {
+        countdownValue--;
+        if (countdownElement) {
+            countdownElement.textContent = countdownValue;
+        }
+        
+        if (countdownValue <= 0) {
+            // Trigger the health check
+            if (checkButton) {
+                checkButton.click();
+            }
+            resetCountdown();
+        }
+    }, 1000);
+}
+
+function resetCountdown() {
+    countdownValue = 10;
+    const countdownElement = document.getElementById('countdown');
+    if (countdownElement) {
+        countdownElement.textContent = countdownValue;
+    }
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+    }
+    startCountdown();
+}
+
+// Start countdown when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    startCountdown();
+});
 </script>
 
 <script>
