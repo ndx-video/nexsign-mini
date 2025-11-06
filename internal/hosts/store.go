@@ -101,31 +101,41 @@ func (s *Store) Add(host types.Host) error {
 // Update updates an existing host by IP address
 func (s *Store) Update(ip string, updater func(*types.Host)) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	found := false
 	for i := range s.hosts {
 		if s.hosts[i].IPAddress == ip {
 			updater(&s.hosts[i])
-			return s.Save()
+			found = true
+			break
 		}
 	}
+	s.mu.Unlock()
 
-	return fmt.Errorf("host not found: %s", ip)
+	if !found {
+		return fmt.Errorf("host not found: %s", ip)
+	}
+
+	return s.Save()
 }
 
 // Delete removes a host by IP address
 func (s *Store) Delete(ip string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	found := false
 	for i, host := range s.hosts {
 		if host.IPAddress == ip {
 			s.hosts = append(s.hosts[:i], s.hosts[i+1:]...)
-			return s.Save()
+			found = true
+			break
 		}
 	}
+	s.mu.Unlock()
 
-	return fmt.Errorf("host not found: %s", ip)
+	if !found {
+		return fmt.Errorf("host not found: %s", ip)
+	}
+
+	return s.Save()
 }
 
 // ReplaceAll replaces the entire host list (used when receiving pushed updates)
