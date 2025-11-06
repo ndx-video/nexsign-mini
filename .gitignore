@@ -5,6 +5,7 @@
 *.so
 *.dylib
 nsm
+/deployer
 bin/
 
 # Key files
@@ -23,6 +24,14 @@ logs/
 
 # Local debug/test artifacts
 test_broadcast_bin
+
+# Host persistence artifacts
+backups/
+hosts.db
+hosts.db-shm
+hosts.db-wal
+hosts.json.migrated
+hosts-*.json
 
 # Tendermint data and temp files
 .tendermint*

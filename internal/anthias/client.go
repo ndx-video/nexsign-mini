@@ -38,22 +38,26 @@ func (c *Client) GetMetadata() (*types.Host, error) {
 	if err != nil {
 		hostname = "unknown"
 	}
+	host.Nickname = hostname
 	host.Hostname = hostname
 
 	// Get primary IP address (first non-loopback IPv4)
 	host.IPAddress = getPrimaryIP()
+	host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
+	host.Status = types.StatusUnreachable
+	host.NSMStatus = "NSM Offline"
+	host.NSMVersion = "unknown"
+	host.CMSStatus = types.CMSUnknown
+	host.VPNIPAddress = ""
+	host.CMSStatusVPN = types.CMSUnknown
+	host.NSMStatusVPN = ""
+	host.NSMVersionVPN = ""
+	host.DashboardURLVPN = ""
 
 	// Try to get Anthias version and status
 	// For now, we'll use system checks since Anthias API may not be running
 	host.AnthiasVersion = getAnthiasVersion()
 	host.AnthiasStatus = getAnthiasStatus()
-
-	// Set dashboard URL (Anthias listens on port 80)
-	if host.IPAddress != "" && host.IPAddress != "127.0.0.1" {
-		host.DashboardURL = fmt.Sprintf("http://%s", host.IPAddress)
-	} else {
-		host.DashboardURL = "http://localhost"
-	}
 
 	return host, nil
 }

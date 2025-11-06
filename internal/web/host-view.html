@@ -9,7 +9,7 @@
     document.querySelector('.breadcrumbs').innerHTML = 
         `<a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer" hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
          <span class="text-desert-gray">/</span>
-         <span class="text-desert-tan py-2">{{ .SelectedHost.Hostname }}</span>`;
+         <span class="text-desert-tan py-2">{{ if .SelectedHost.Nickname }}{{ .SelectedHost.Nickname }}{{ else }}{{ .SelectedHost.Hostname }}{{ end }}</span>`;
     htmx.process(document.querySelector('.breadcrumbs'));
 </script>
 {{else}}

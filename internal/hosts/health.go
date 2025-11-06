@@ -15,105 +15,163 @@ import (
 // CheckHealth performs a health check on a host and returns its status
 // It also checks the Anthias CMS status by querying the /api/v1/assets endpoint
 func CheckHealth(host *types.Host) types.HostStatus {
-	// Try to connect to the nsm dashboard port (8080)
-	timeout := 3 * time.Second
-	nsmAddress := fmt.Sprintf("%s:8080", host.IPAddress)
+	host.Status = checkNetwork(host, host.IPAddress, false)
 
-	// First, try TCP connection to nsm port
+	if host.VPNIPAddress != "" {
+		host.StatusVPN = checkNetwork(host, host.VPNIPAddress, true)
+	} else {
+		host.StatusVPN = ""
+		host.NSMStatusVPN = ""
+		host.NSMVersionVPN = ""
+		host.CMSStatusVPN = types.CMSUnknown
+		host.AssetCountVPN = 0
+		host.DashboardURLVPN = ""
+		host.LastCheckedVPN = time.Time{}
+	}
+
+	return host.Status
+}
+
+func checkNetwork(host *types.Host, ip string, isVPN bool) types.HostStatus {
+	now := time.Now()
+
+	dashboardURL := ""
+	if ip != "" {
+		dashboardURL = fmt.Sprintf("http://%s:8080", ip)
+	}
+
+	cmsStatus, assetCount := checkAnthiasCMSByIP(ip)
+
+	status := types.StatusUnreachable
+	nsmStatusText := "NSM Offline"
+	nsmVersion := "unknown"
+
+	if ip == "" {
+		applyNetworkResults(host, isVPN, status, cmsStatus, assetCount, nsmStatusText, nsmVersion, dashboardURL, now)
+		return status
+	}
+
+	timeout := 3 * time.Second
+	nsmAddress := fmt.Sprintf("%s:8080", ip)
+
 	conn, err := net.DialTimeout("tcp", nsmAddress, timeout)
 	if err != nil {
-		// Check if it's a connection refused vs unreachable
 		if opErr, ok := err.(*net.OpError); ok {
 			if _, ok := opErr.Err.(*net.DNSError); ok {
-				host.CMSStatus = types.CMSUnknown
-				return types.StatusUnreachable
+				status = types.StatusUnreachable
+			} else {
+				status = types.StatusConnectionRefused
+				nsmStatusText = "NSM Connection Refused"
 			}
-			// Connection refused typically means host is up but service isn't running
-			host.CMSStatus = types.CMSUnknown
-			return types.StatusConnectionRefused
+		} else {
+			status = types.StatusUnreachable
 		}
-		host.CMSStatus = types.CMSUnknown
-		return types.StatusUnreachable
+		applyNetworkResults(host, isVPN, status, cmsStatus, assetCount, nsmStatusText, nsmVersion, dashboardURL, now)
+		return status
 	}
 	conn.Close()
 
-	// NSM is reachable, now check Anthias CMS on port 80
-	checkAnthiasCMS(host)
+	status = types.StatusUnhealthy
 
-	// Check NSM version
 	client := &http.Client{Timeout: timeout}
-	versionURL := fmt.Sprintf("http://%s:8080/api/version", host.IPAddress)
+	versionURL := fmt.Sprintf("http://%s:8080/api/version", ip)
 
 	versionResp, err := client.Get(versionURL)
-	if err != nil {
-		// Cannot get version - service might not have /api/version endpoint
-		host.NSMVersion = "unknown"
-		return types.StatusUnhealthy
-	}
-	defer versionResp.Body.Close()
-
-	if versionResp.StatusCode == http.StatusOK {
-		var versionData struct {
-			Version string `json:"version"`
-		}
-		if err := json.NewDecoder(versionResp.Body).Decode(&versionData); err == nil {
-			host.NSMVersion = versionData.Version
-
-			// Compare versions - if remote is older than current, mark as stale
-			if compareVersions(versionData.Version, types.Version) < 0 {
-				return types.StatusStale
+	if err == nil {
+		defer versionResp.Body.Close()
+		if versionResp.StatusCode == http.StatusOK {
+			var versionData struct {
+				Version  string `json:"version"`
+				Hostname string `json:"hostname"`
 			}
-		} else {
-			host.NSMVersion = "unknown"
-			return types.StatusUnhealthy
+			if err := json.NewDecoder(versionResp.Body).Decode(&versionData); err == nil {
+				if versionData.Version != "" {
+					nsmVersion = versionData.Version
+					if compareVersions(versionData.Version, types.Version) < 0 {
+						status = types.StatusStale
+						nsmStatusText = "NSM Online (Update Required)"
+					}
+				}
+				if versionData.Hostname != "" {
+					host.Hostname = versionData.Hostname
+				}
+			}
 		}
-	} else {
-		host.NSMVersion = "unknown"
-		return types.StatusUnhealthy
 	}
 
-	// HTTP health check for nsm
-	healthURL := fmt.Sprintf("http://%s:8080/api/health", host.IPAddress)
+	if nsmStatusText == "NSM Offline" {
+		nsmStatusText = "NSM Unhealthy"
+	}
 
+	healthURL := fmt.Sprintf("http://%s:8080/api/health", ip)
 	resp, err := client.Get(healthURL)
-	if err != nil {
-		// HTTP failed but TCP worked - service might be unhealthy
-		return types.StatusUnhealthy
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			if status != types.StatusStale {
+				status = types.StatusHealthy
+				nsmStatusText = "NSM Online"
+			}
+		}
 	}
-	defer resp.Body.Close()
 
-	// Check HTTP status code
-	if resp.StatusCode == http.StatusOK {
-		return types.StatusHealthy
+	if status == types.StatusUnhealthy && nsmStatusText == "NSM Unhealthy" {
+		nsmStatusText = "NSM Degraded"
 	}
 
-	return types.StatusUnhealthy
+	applyNetworkResults(host, isVPN, status, cmsStatus, assetCount, nsmStatusText, nsmVersion, dashboardURL, now)
+
+	return status
 }
 
-// checkAnthiasCMS checks if the Anthias CMS is online by querying /api/v1/assets on port 80
-func checkAnthiasCMS(host *types.Host) {
+func applyNetworkResults(host *types.Host, isVPN bool, status types.HostStatus, cmsStatus types.AnthiasCMSStatus, assetCount int, nsmStatus string, nsmVersion string, dashboardURL string, checkedAt time.Time) {
+	if isVPN {
+		host.StatusVPN = status
+		host.CMSStatusVPN = cmsStatus
+		host.AssetCountVPN = assetCount
+		host.NSMStatusVPN = nsmStatus
+		host.NSMVersionVPN = nsmVersion
+		host.DashboardURLVPN = dashboardURL
+		host.LastCheckedVPN = checkedAt
+	} else {
+		host.Status = status
+		host.CMSStatus = cmsStatus
+		host.AssetCount = assetCount
+		host.NSMStatus = nsmStatus
+		host.NSMVersion = nsmVersion
+		host.DashboardURL = dashboardURL
+		host.LastChecked = checkedAt
+	}
+}
+
+// checkAnthiasCMSByIP checks CMS availability for a specific IP address.
+func checkAnthiasCMSByIP(ip string) (types.AnthiasCMSStatus, int) {
+	if ip == "" {
+		return types.CMSUnknown, 0
+	}
+
 	timeout := 3 * time.Second
 	client := &http.Client{Timeout: timeout}
-
-	// Try to query Anthias API
-	anthiasURL := fmt.Sprintf("http://%s/api/v1/assets", host.IPAddress)
+	anthiasURL := fmt.Sprintf("http://%s/api/v1/assets?format=json", ip)
 
 	resp, err := client.Get(anthiasURL)
 	if err != nil {
-		// Cannot reach Anthias API
-		host.CMSStatus = types.CMSOffline
-		return
+		return types.CMSOffline, 0
 	}
 	defer resp.Body.Close()
 
-	// If we get a 200 response, CMS is online
 	if resp.StatusCode == http.StatusOK {
-		host.CMSStatus = types.CMSOnline
-		return
+		var assets []map[string]interface{}
+		decoder := json.NewDecoder(resp.Body)
+
+		if err := decoder.Decode(&assets); err != nil {
+			return types.CMSOnline, 0
+		}
+
+		return types.CMSOnline, len(assets)
 	}
 
-	// Any other status code means offline or error
-	host.CMSStatus = types.CMSOffline
+	return types.CMSOffline, 0
 }
 
 // compareVersions compares two semantic version strings
@@ -153,8 +211,7 @@ func (s *Store) CheckAllHosts() {
 	hosts := s.GetAll()
 
 	for i := range hosts {
-		hosts[i].Status = CheckHealth(&hosts[i])
-		hosts[i].LastChecked = time.Now()
+		CheckHealth(&hosts[i])
 	}
 
 	s.ReplaceAll(hosts)

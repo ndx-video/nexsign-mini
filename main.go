@@ -3,9 +3,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -19,7 +22,7 @@ func main() {
 	log.Println("nexSign mini starting...")
 
 	// Initialize host store
-	store, err := hosts.NewStore("hosts.json")
+	store, err := hosts.NewStore("")
 	if err != nil {
 		log.Fatalf("Failed to initialize host store: %v", err)
 	}
@@ -29,13 +32,9 @@ func main() {
 	anthiasClient := anthias.NewClient()
 	log.Println("Anthias client initialized")
 
-	// Get port from environment or use default
-	port := 8080
-	if portStr := os.Getenv("PORT"); portStr != "" {
-		_, err := os.Stat(portStr)
-		if err == nil {
-			port = 8080 // keep default if parsing fails
-		}
+	port := resolvePort(8080)
+	if err := ensurePortAvailable(port); err != nil {
+		log.Fatalf("Port %d unavailable: %v", port, err)
 	}
 
 	// Initialize web server
@@ -45,7 +44,12 @@ func main() {
 	}
 
 	// Start web server
-	server.Start()
+	serverErrors := server.Start()
+	go func() {
+		if err := <-serverErrors; err != nil {
+			log.Fatalf("Web server exited: %v", err)
+		}
+	}()
 	log.Printf("Web dashboard available at http://localhost:%d", port)
 
 	// Start background Anthias polling
@@ -94,13 +98,25 @@ func updateLocalHost(store *hosts.Store, client *anthias.Client) {
 	if !localhostExists {
 		// Add localhost entry
 		localhost := types.Host{
+			Nickname:       metadata.Nickname,
 			IPAddress:      metadata.IPAddress,
+			VPNIPAddress:   metadata.VPNIPAddress,
 			Hostname:       metadata.Hostname,
-			Status:         types.StatusHealthy,
+			Notes:          "",
+			Status:         types.StatusUnreachable,
+			NSMStatus:      "NSM Offline",
+			NSMVersion:     "unknown",
+			CMSStatus:      types.CMSUnknown,
 			AnthiasVersion: metadata.AnthiasVersion,
 			AnthiasStatus:  metadata.AnthiasStatus,
 			DashboardURL:   metadata.DashboardURL,
-			LastChecked:    time.Now(),
+		}
+		if metadata.VPNIPAddress != "" {
+			localhost.StatusVPN = types.StatusUnreachable
+			localhost.NSMStatusVPN = "NSM Offline"
+			localhost.NSMVersionVPN = "unknown"
+			localhost.CMSStatusVPN = types.CMSUnknown
+			localhost.DashboardURLVPN = fmt.Sprintf("http://%s:8080", metadata.VPNIPAddress)
 		}
 		if err := store.Add(localhost); err != nil {
 			log.Printf("Warning: failed to add localhost: %v", err)
@@ -110,15 +126,48 @@ func updateLocalHost(store *hosts.Store, client *anthias.Client) {
 	} else {
 		// Update existing localhost entry
 		err := store.Update(metadata.IPAddress, func(h *types.Host) {
-			h.Hostname = metadata.Hostname
+			if metadata.Hostname != "" {
+				h.Hostname = metadata.Hostname
+			}
+			if h.Nickname == "" && metadata.Nickname != "" {
+				h.Nickname = metadata.Nickname
+			}
 			h.AnthiasVersion = metadata.AnthiasVersion
 			h.AnthiasStatus = metadata.AnthiasStatus
 			h.DashboardURL = metadata.DashboardURL
-			h.Status = types.StatusHealthy
-			h.LastChecked = time.Now()
+			if metadata.VPNIPAddress != "" {
+				h.VPNIPAddress = metadata.VPNIPAddress
+				if h.DashboardURLVPN == "" {
+					h.DashboardURLVPN = fmt.Sprintf("http://%s:8080", metadata.VPNIPAddress)
+				}
+			}
 		})
 		if err != nil {
 			log.Printf("Warning: failed to update localhost: %v", err)
 		}
 	}
+}
+
+func resolvePort(defaultPort int) int {
+	portStr := os.Getenv("PORT")
+	if portStr == "" {
+		return defaultPort
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		log.Printf("Warning: invalid PORT value %q, using %d", portStr, defaultPort)
+		return defaultPort
+	}
+
+	return port
+}
+
+func ensurePortAvailable(port int) error {
+	addr := fmt.Sprintf(":%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return listener.Close()
 }

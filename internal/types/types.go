@@ -33,13 +33,27 @@ const (
 // Host represents a single Anthias digital signage host on the network.
 // Hosts are identified by IP address and managed manually via the dashboard.
 type Host struct {
-	IPAddress      string           `json:"ip_address"`      // Required: IP address of the host
-	Hostname       string           `json:"hostname"`        // Optional: friendly name for the host
-	Status         HostStatus       `json:"status"`          // Health status: unreachable, connection_refused, unhealthy, healthy, stale
-	NSMVersion     string           `json:"nsm_version"`     // Detected NSM version
-	AnthiasVersion string           `json:"anthias_version"` // Detected Anthias version
-	AnthiasStatus  string           `json:"anthias_status"`  // Anthias service status (online, offline, unknown)
-	CMSStatus      AnthiasCMSStatus `json:"cms_status"`      // Anthias CMS status (CMS Online, CMS Offline, CMS Unknown)
-	DashboardURL   string           `json:"dashboard_url"`   // URL to host's dashboard (port 80)
-	LastChecked    time.Time        `json:"last_checked"`    // Last time status was checked
+	Nickname          string           `json:"nickname"`                      // Optional: user-friendly label displayed in UI
+	IPAddress         string           `json:"ip_address"`                    // Required: LAN IP address of the host
+	VPNIPAddress      string           `json:"vpn_ip_address,omitempty"`      // Optional: Tailnet/Tailscale IP address
+	Hostname          string           `json:"hostname"`                      // Detected UNIX hostname from remote node
+	Notes             string           `json:"notes,omitempty"`               // Optional operator notes surfaced in UI
+	Status            HostStatus       `json:"status"`                        // LAN health status: unreachable, connection_refused, unhealthy, healthy, stale
+	StatusVPN         HostStatus       `json:"status_vpn,omitempty"`          // VPN health status when VPN IP is configured
+	NSMStatus         string           `json:"nsm_status"`                    // Textual representation of LAN NSM dashboard state
+	NSMStatusVPN      string           `json:"nsm_status_vpn,omitempty"`      // Textual representation of VPN NSM dashboard state
+	NSMVersion        string           `json:"nsm_version"`                   // Detected LAN NSM version
+	NSMVersionVPN     string           `json:"nsm_version_vpn,omitempty"`     // Detected VPN NSM version
+	AnthiasVersion    string           `json:"anthias_version"`               // Detected LAN Anthias version
+	AnthiasVersionVPN string           `json:"anthias_version_vpn,omitempty"` // Detected VPN Anthias version
+	AnthiasStatus     string           `json:"anthias_status"`                // Anthias service status (LAN)
+	AnthiasStatusVPN  string           `json:"anthias_status_vpn,omitempty"`  // Anthias service status (VPN)
+	CMSStatus         AnthiasCMSStatus `json:"cms_status"`                    // Anthias CMS status over LAN
+	CMSStatusVPN      AnthiasCMSStatus `json:"cms_status_vpn,omitempty"`      // Anthias CMS status over VPN
+	AssetCount        int              `json:"asset_count"`                   // Number of assets reachable via LAN
+	AssetCountVPN     int              `json:"asset_count_vpn,omitempty"`     // Number of assets reachable via VPN
+	DashboardURL      string           `json:"dashboard_url"`                 // URL to host's NSM dashboard over LAN
+	DashboardURLVPN   string           `json:"dashboard_url_vpn,omitempty"`   // URL to host's NSM dashboard over VPN
+	LastChecked       time.Time        `json:"last_checked"`                  // Last time LAN status was checked
+	LastCheckedVPN    time.Time        `json:"last_checked_vpn,omitempty"`    // Last time VPN status was checked
 }

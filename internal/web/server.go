@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	"nexsign.mini/nsm/internal/anthias"
@@ -22,8 +23,9 @@ import (
 
 // TemplateData holds the data to be passed to the HTML template.
 type TemplateData struct {
-	Hosts        []types.Host
-	SelectedHost *types.Host
+	Hosts         []types.Host
+	SelectedHost  *types.Host
+	CurrentHostIP string
 }
 
 // Server is the web server for the dashboard and API.
@@ -51,35 +53,42 @@ func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Se
 }
 
 // Start initializes and runs the web server.
-func (s *Server) Start() {
+func (s *Server) Start() <-chan error {
 	log.Printf("Web UI: Starting dashboard and API server on http://localhost:%d", s.port)
 
 	fs := http.FileServer(http.Dir("internal/web/static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	mux := http.NewServeMux()
+	mux.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// Page routes
-	http.HandleFunc("/", s.handlePageLoad)
-	http.HandleFunc("/views/home", s.handleHomeView)
+	mux.HandleFunc("/", s.handlePageLoad)
+	mux.HandleFunc("/views/home", s.handleHomeView)
 
 	// API routes
-	http.HandleFunc("/api/health", s.handleHealth)
-	http.HandleFunc("/api/version", s.handleVersion)
-	http.HandleFunc("/api/hosts", s.handleGetHosts)
-	http.HandleFunc("/api/hosts/add", s.handleAddHost)
-	http.HandleFunc("/api/hosts/update", s.handleUpdateHost)
-	http.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
-	http.HandleFunc("/api/hosts/check", s.handleCheckHosts)
-	http.HandleFunc("/api/hosts/push", s.handlePushHosts)
-	http.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
-	http.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
-	http.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
+	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/hosts", s.handleGetHosts)
+	mux.HandleFunc("/api/hosts/add", s.handleAddHost)
+	mux.HandleFunc("/api/hosts/update", s.handleUpdateHost)
+	mux.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
+	mux.HandleFunc("/api/hosts/check", s.handleCheckHosts)
+	mux.HandleFunc("/api/hosts/check-stream", s.handleCheckHostsStream)
+	mux.HandleFunc("/api/hosts/push", s.handlePushHosts)
+	mux.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
+	mux.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
+	mux.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
+	mux.HandleFunc("/api/proxy/anthias", s.handleAnthiasProxy)
 
 	addr := fmt.Sprintf(":%d", s.port)
+	errCh := make(chan error, 1)
+
 	go func() {
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			log.Printf("Error starting web server: %s", err)
-		}
+		err := http.ListenAndServe(addr, mux)
+		errCh <- err
+		close(errCh)
 	}()
+
+	return errCh
 }
 
 func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +102,16 @@ func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
-	data := TemplateData{Hosts: s.store.GetAll()}
+	// Get current host IP
+	currentIP := ""
+	if localHost, err := s.anthias.GetMetadata(); err == nil {
+		currentIP = localHost.IPAddress
+	}
+
+	data := TemplateData{
+		Hosts:         s.store.GetAll(),
+		CurrentHostIP: currentIP,
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
 
@@ -134,23 +152,55 @@ func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var host types.Host
-	if err := json.NewDecoder(r.Body).Decode(&host); err != nil {
+	var req struct {
+		Nickname  string `json:"nickname"`
+		IPAddress string `json:"ip_address"`
+		VPNIP     string `json:"vpn_ip_address"`
+		Notes     string `json:"notes"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Validate required fields
-	if host.IPAddress == "" {
-		http.Error(w, "IP address is required", http.StatusBadRequest)
+	ip := strings.TrimSpace(req.IPAddress)
+	vpnIP := strings.TrimSpace(req.VPNIP)
+	nickname := strings.TrimSpace(req.Nickname)
+	notes := strings.TrimSpace(req.Notes)
+
+	if !isValidIPv4(ip) {
+		http.Error(w, "Valid LAN IP address is required", http.StatusBadRequest)
 		return
 	}
 
-	// Set initial status
-	host.Status = types.StatusUnreachable
-	host.LastChecked = time.Now()
-	if host.DashboardURL == "" {
-		host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
+	if vpnIP != "" && !isValidIPv4(vpnIP) {
+		http.Error(w, "VPN IP address must be a valid IPv4 address", http.StatusBadRequest)
+		return
+	}
+
+	host := types.Host{
+		Nickname:      nickname,
+		IPAddress:     ip,
+		VPNIPAddress:  vpnIP,
+		Notes:         notes,
+		Status:        types.StatusUnreachable,
+		StatusVPN:     "",
+		NSMStatus:     "NSM Offline",
+		NSMStatusVPN:  "",
+		NSMVersion:    "unknown",
+		NSMVersionVPN: "",
+		CMSStatus:     types.CMSUnknown,
+		CMSStatusVPN:  types.CMSUnknown,
+		DashboardURL:  fmt.Sprintf("http://%s:8080", ip),
+		LastChecked:   time.Time{},
+	}
+
+	if vpnIP != "" {
+		host.StatusVPN = types.StatusUnreachable
+		host.NSMStatusVPN = "NSM Offline"
+		host.NSMVersionVPN = "unknown"
+		host.DashboardURLVPN = fmt.Sprintf("http://%s:8080", vpnIP)
 	}
 
 	if err := s.store.Add(host); err != nil {
@@ -160,14 +210,18 @@ func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check health of new host
-	go func() {
-		host.Status = hosts.CheckHealth(&host)
-		host.LastChecked = time.Now()
-		s.store.Update(host.IPAddress, func(h *types.Host) {
-			h.Status = host.Status
-			h.LastChecked = host.LastChecked
-		})
-	}()
+	go func(base types.Host) {
+		updated := base
+		hosts.CheckHealth(&updated)
+		if err := s.store.Update(base.IPAddress, func(h *types.Host) {
+			copyNetworkState(h, &updated)
+			if updated.Hostname != "" {
+				h.Hostname = updated.Hostname
+			}
+		}); err != nil {
+			log.Printf("Error persisting host health for %s: %v", base.IPAddress, err)
+		}
+	}(host)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -181,9 +235,11 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var updateReq struct {
-		OldIP     string `json:"old_ip"`
-		IPAddress string `json:"ip_address"`
-		Hostname  string `json:"hostname"`
+		OldIP        string `json:"old_ip"`
+		IPAddress    string `json:"ip_address"`
+		VPNIPAddress string `json:"vpn_ip_address"`
+		Nickname     string `json:"nickname"`
+		Notes        string `json:"notes"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
@@ -191,20 +247,81 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	newIP := strings.TrimSpace(updateReq.IPAddress)
+	newVPN := strings.TrimSpace(updateReq.VPNIPAddress)
+	newNickname := strings.TrimSpace(updateReq.Nickname)
+	newNotes := strings.TrimSpace(updateReq.Notes)
+
+	if !isValidIPv4(newIP) {
+		http.Error(w, "Valid LAN IP address is required", http.StatusBadRequest)
+		return
+	}
+
+	if newVPN != "" && !isValidIPv4(newVPN) {
+		http.Error(w, "VPN IP address must be a valid IPv4 address", http.StatusBadRequest)
+		return
+	}
+
 	err := s.store.Update(updateReq.OldIP, func(h *types.Host) {
-		if updateReq.IPAddress != "" {
-			h.IPAddress = updateReq.IPAddress
-			h.DashboardURL = fmt.Sprintf("http://%s:8080", updateReq.IPAddress)
+		if newIP != "" {
+			ipChanged := newIP != h.IPAddress
+			h.IPAddress = newIP
+			h.DashboardURL = fmt.Sprintf("http://%s:8080", newIP)
+			if ipChanged {
+				h.Status = types.StatusUnreachable
+				h.NSMStatus = "NSM Offline"
+				h.NSMVersion = "unknown"
+				h.CMSStatus = types.CMSUnknown
+				h.AssetCount = 0
+				h.LastChecked = time.Time{}
+			}
 		}
-		if updateReq.Hostname != "" {
-			h.Hostname = updateReq.Hostname
+
+		if newVPN == "" {
+			h.VPNIPAddress = ""
+			h.StatusVPN = ""
+			h.NSMStatusVPN = ""
+			h.NSMVersionVPN = ""
+			h.CMSStatusVPN = types.CMSUnknown
+			h.AssetCountVPN = 0
+			h.DashboardURLVPN = ""
+			h.LastCheckedVPN = time.Time{}
+		} else {
+			vpnChanged := newVPN != h.VPNIPAddress
+			h.VPNIPAddress = newVPN
+			h.DashboardURLVPN = fmt.Sprintf("http://%s:8080", newVPN)
+			if vpnChanged {
+				h.StatusVPN = types.StatusUnreachable
+				h.NSMStatusVPN = "NSM Offline"
+				h.NSMVersionVPN = "unknown"
+				h.CMSStatusVPN = types.CMSUnknown
+				h.AssetCountVPN = 0
+				h.LastCheckedVPN = time.Time{}
+			}
 		}
+
+		h.Nickname = newNickname
+		h.Notes = newNotes
 	})
 
 	if err != nil {
 		log.Printf("Error updating host: %s", err)
 		http.Error(w, "Failed to update host", http.StatusInternalServerError)
 		return
+	}
+
+	if updatedHost, getErr := s.store.GetByIP(newIP); getErr == nil {
+		go func(toRefresh *types.Host) {
+			hosts.CheckHealth(toRefresh)
+			if err := s.store.Update(toRefresh.IPAddress, func(h *types.Host) {
+				copyNetworkState(h, toRefresh)
+				if toRefresh.Hostname != "" {
+					h.Hostname = toRefresh.Hostname
+				}
+			}); err != nil {
+				log.Printf("Error refreshing host %s after update: %v", toRefresh.IPAddress, err)
+			}
+		}(updatedHost)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -245,6 +362,79 @@ func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "checking"})
+}
+
+// handleCheckHostsStream streams health check progress via Server-Sent Events
+func (s *Server) handleCheckHostsStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	hostList := s.store.GetAll()
+
+	// Send checking event for each host
+	for i := range hostList {
+		// Send start event
+		data, _ := json.Marshal(map[string]interface{}{
+			"ip":     hostList[i].IPAddress,
+			"status": "checking",
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		// Perform health check
+		hosts.CheckHealth(&hostList[i])
+
+		// Wait 1 second before sending complete event so indicator is visible
+		time.Sleep(1 * time.Second)
+
+		// Send complete event
+		complete := map[string]interface{}{
+			"ip":       hostList[i].IPAddress,
+			"status":   "complete",
+			"nickname": hostList[i].Nickname,
+			"hostname": hostList[i].Hostname,
+			"lan": map[string]interface{}{
+				"status":       hostList[i].Status,
+				"cms_status":   hostList[i].CMSStatus,
+				"asset_count":  hostList[i].AssetCount,
+				"last_checked": hostList[i].LastChecked,
+			},
+		}
+
+		if hostList[i].VPNIPAddress != "" {
+			complete["vpn"] = map[string]interface{}{
+				"ip":           hostList[i].VPNIPAddress,
+				"status":       hostList[i].StatusVPN,
+				"cms_status":   hostList[i].CMSStatusVPN,
+				"asset_count":  hostList[i].AssetCountVPN,
+				"last_checked": hostList[i].LastCheckedVPN,
+			}
+		}
+
+		data, _ = json.Marshal(complete)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Save updated hosts
+	s.store.ReplaceAll(hostList)
+
+	// Send done event
+	fmt.Fprintf(w, "data: {\"status\":\"done\"}\n\n")
+	flusher.Flush()
 }
 
 // handlePushHosts pushes the current host list to all other hosts
@@ -308,13 +498,24 @@ func (s *Server) handleReceiveHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	backupPath, err := s.store.BackupCurrent(20)
+	if err != nil {
+		log.Printf("Error creating host backup: %v", err)
+		http.Error(w, "Failed to backup existing host list", http.StatusInternalServerError)
+		return
+	}
+
 	if err := s.store.ReplaceAll(hosts); err != nil {
 		log.Printf("Error replacing host list: %s", err)
 		http.Error(w, "Failed to update host list", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Received and updated host list from remote host (count: %d)", len(hosts))
+	if backupPath != "" {
+		log.Printf("Received host list; previous copy moved to %s (count: %d)", backupPath, len(hosts))
+	} else {
+		log.Printf("Received host list from remote host (count: %d)", len(hosts))
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -492,12 +693,92 @@ func (s *Server) handleUpgradeHost(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+// handleAnthiasProxy proxies requests to Anthias devices to avoid CORS issues.
+func (s *Server) handleAnthiasProxy(w http.ResponseWriter, r *http.Request) {
+	// Get IP and path from query parameters
+	ip := r.URL.Query().Get("ip")
+	path := r.URL.Query().Get("path")
+
+	if ip == "" || path == "" {
+		http.Error(w, "Missing 'ip' or 'path' parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Build the target URL
+	targetURL := fmt.Sprintf("http://%s%s", ip, path)
+
+	// Create the proxy request
+	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers
+	for key, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(key, value)
+		}
+	}
+
+	// Make the request
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to reach Anthias device: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Set CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Copy status code and body
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
 // setCacheHeaders sets cache-busting headers to prevent browser caching.
 // These headers ensure fresh content in development and production.
 func (s *Server) setCacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+}
+
+func isValidIPv4(ip string) bool {
+	if ip == "" {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() != nil
+}
+
+func copyNetworkState(dst, src *types.Host) {
+	dst.Status = src.Status
+	dst.CMSStatus = src.CMSStatus
+	dst.AssetCount = src.AssetCount
+	dst.NSMStatus = src.NSMStatus
+	dst.NSMVersion = src.NSMVersion
+	dst.DashboardURL = src.DashboardURL
+	dst.LastChecked = src.LastChecked
+
+	dst.StatusVPN = src.StatusVPN
+	dst.CMSStatusVPN = src.CMSStatusVPN
+	dst.AssetCountVPN = src.AssetCountVPN
+	dst.NSMStatusVPN = src.NSMStatusVPN
+	dst.NSMVersionVPN = src.NSMVersionVPN
+	dst.DashboardURLVPN = src.DashboardURLVPN
+	dst.LastCheckedVPN = src.LastCheckedVPN
 }
 
 // tryGorillaUpgrade attempts to upgrade the connection using gorilla/websocket
