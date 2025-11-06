@@ -38,22 +38,26 @@ func (c *Client) GetMetadata() (*types.Host, error) {
 	if err != nil {
 		hostname = "unknown"
 	}
+	host.Nickname = hostname
 	host.Hostname = hostname
 
 	// Get primary IP address (first non-loopback IPv4)
 	host.IPAddress = getPrimaryIP()
+	host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
+	host.Status = types.StatusUnreachable
+	host.NSMStatus = "NSM Offline"
+	host.NSMVersion = "unknown"
+	host.CMSStatus = types.CMSUnknown
+	host.VPNIPAddress = ""
+	host.CMSStatusVPN = types.CMSUnknown
+	host.NSMStatusVPN = ""
+	host.NSMVersionVPN = ""
+	host.DashboardURLVPN = ""
 
 	// Try to get Anthias version and status
 	// For now, we'll use system checks since Anthias API may not be running
 	host.AnthiasVersion = getAnthiasVersion()
 	host.AnthiasStatus = getAnthiasStatus()
-	
-	// Set dashboard URL
-	if host.IPAddress != "" && host.IPAddress != "127.0.0.1" {
-		host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
-	} else {
-		host.DashboardURL = "http://localhost:8080"
-	}
 
 	return host, nil
 }
@@ -89,7 +93,7 @@ func getAnthiasVersion() string {
 func getAnthiasStatus() string {
 	// TODO: Query actual Anthias API health endpoint when available
 	// For now, we'll check if we can connect to the expected port
-	
+
 	// Try to check systemd service status
 	cmd := exec.Command("systemctl", "is-active", "anthias")
 	output, err := cmd.Output()

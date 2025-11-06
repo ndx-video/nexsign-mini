@@ -1,136 +1,122 @@
 # nexSign mini (nsm)
 
-`nsm` is a decentralized service written in Go that provides automatic discovery, monitoring, and *management* for a network of [Anthias](https://www.anthias.io/) digital signage players.
+nexSign mini is a lightweight Go service that keeps a manually curated roster of Anthias signage hosts in sync. It provides a single-page dashboard for status checks, inline edits, and one-click pushes to the rest of the fleet.
 
-## Project Goals
+## Features
 
-The primary goal of `nsm` is to create a zero-configuration, resilient, and lightweight monitoring and management solution for Anthias hosts, especially those running on System-on-Chip (SoC) hardware. It achieves this by:
-
-1.  **Automatic Discovery:** `nsm` instances automatically find each other on the local network using mDNS, requiring no central server.
-2.  **Distributed State & Audit:** It maintains a distributed ledger of all known Anthias hosts using the Tendermint consensus engine. This ledger stores host metadata and provides an **immutable, signed audit log** for all management actions.
-3.  **Centralized Interface:** It provides a simple web dashboard that aggregates all discovered Anthias players, allowing users to monitor status and manage hosts from a single interface.
-4.  **API First:** The service includes a simple REST API to allow for integration with third-party services (e.g., n8n, Kestra).
+- Manual host management with inline edits, deletions, and instant NSM dashboard links
+- Health checks that capture TCP reachability, NSM API status, Anthias CMS state, and asset counts
+- Push-to-fleet workflow that snapshots the previous SQLite database into `backups/hosts-<epoch>.db` and trims the archive to the newest twenty copies
+- Port guard that refuses to start when another process already owns port `8080`
+- HTMX-driven web UI served directly from the Go standard library
+- REST API for automations and fleet tooling
 
 ## Architecture
 
-The `nsm` service is composed of several key components:
+- **Host store** – thread-safe wrapper around `hosts.db` (SQLite). It self-heals on launch by restoring the most recent backup or rebuilding an empty database, and rotates snapshots in `backups/`
+- **Health checker** – runs targeted TCP and HTTP probes to classify hosts as `unreachable`, `connection_refused`, `unhealthy`, `healthy`, or `stale`
+- **Anthias client** – polls the local player for metadata and ensures the localhost entry is always present
+- **Web server** – renders the HTMX dashboard, exposes the REST API, and streams Server-Sent Events during health sweeps
 
-* **Node Identity:** On first boot, each `nsm` instance generates a persistent `ed25519` keypair (`nsm_key.pem`). The **public key** serves as the node's permanent, unique ID within the distributed network.
-* **mDNS Discovery:** A service that constantly browses for and announces `_nsm._tcp` services on the local network.
-* **Tendermint Consensus (ABCI):** An application that interfaces with Tendermint Core. It manages the state of the distributed ledger and processes two types of transactions:
-    * **State Transactions:** (e.g., `add_host`, `update_status`) for updating host metadata.
-    * **Action Transactions:** (e.g., `restart_host`) which are signed by the originating node and executed by the target node, providing a built-in audit trail.
-* **Anthias Client:** A component that polls the local Anthias instance to gather its status and metadata.
-* **Web Server:** A native Go web server serving:
-    * A web dashboard (using HTMX) with an `<iframe>` to display the selected Anthias host's UI.
-    * A JSON REST API for external integrations.
-
-### Host Data Model
-
-The core data structure for each host stored in the ledger (mirrors `internal/types/Host`):
+### Host data model
 
 ```go
 type Host struct {
-    Hostname       string `json:"hostname"`
-    IPAddress      string `json:"ip_address"`
-    AnthiasVersion string `json:"anthias_version"`
-    AnthiasStatus  string `json:"anthias_status"`
-    DashboardURL   string `json:"dashboard_url"`
-    PublicKey      string `json:"public_key"` // hex-encoded ED25519 public key
+    Nickname          string           `json:"nickname"`
+    IPAddress         string           `json:"ip_address"`
+    VPNIPAddress      string           `json:"vpn_ip_address"`
+    Hostname          string           `json:"hostname"`
+    Notes             string           `json:"notes"`
+    Status            HostStatus       `json:"status"`
+    StatusVPN         HostStatus       `json:"status_vpn"`
+    NSMStatus         string           `json:"nsm_status"`
+    NSMStatusVPN      string           `json:"nsm_status_vpn"`
+    NSMVersion        string           `json:"nsm_version"`
+    NSMVersionVPN     string           `json:"nsm_version_vpn"`
+    AnthiasVersion    string           `json:"anthias_version"`
+    AnthiasVersionVPN string           `json:"anthias_version_vpn"`
+    AnthiasStatus     string           `json:"anthias_status"`
+    AnthiasStatusVPN  string           `json:"anthias_status_vpn"`
+    CMSStatus         AnthiasCMSStatus `json:"cms_status"`
+    CMSStatusVPN      AnthiasCMSStatus `json:"cms_status_vpn"`
+    AssetCount        int              `json:"asset_count"`
+    AssetCountVPN     int              `json:"asset_count_vpn"`
+    DashboardURL      string           `json:"dashboard_url"`
+    DashboardURLVPN   string           `json:"dashboard_url_vpn"`
+    LastChecked       time.Time        `json:"last_checked"`
+    LastCheckedVPN    time.Time        `json:"last_checked_vpn"`
 }
 ```
 
----
+Status reference:
+
+- `healthy` – NSM dashboard reachable and responsive
+- `stale` – NSM running but reporting an older build
+- `unhealthy` – TCP open but health endpoint failed
+- `connection_refused` – host reachable but nothing listening on `8080`
+- `unreachable` – network or DNS failure
+
+When a host is healthy, the dashboard renders a green “NSM Online” link that points to `http://<ip>:8080`.
 
 ## Quick start
 
-Prereqs
+Prerequisites:
 
-- Linux native filesystem recommended (to avoid key-permission issues).
-- Go 1.21+ installed.
-- Tendermint Core v0.35.x installed and on PATH.
+- Go 1.24+
+- Linux or WSL2 on a native filesystem (to satisfy file permission requirements)
 
-Run the nsm ABCI app and web UI
+Start a local instance:
 
-1) Start nsm (generates `nsm_key.pem` on first run and starts ABCI on `unix://nsm.sock`):
-
-   - `go run cmd/nsm/main.go`
-
-2) Initialize and start Tendermint in another terminal:
-
-   - `tendermint init --home $HOME/.tendermint`
-   - `tendermint node --home $HOME/.tendermint --proxy_app=unix://nsm.sock`
-
-3) Open the dashboard at http://localhost:8080 (override with `PORT` env var).
-
-Useful env vars
-
-- `KEY_FILE` (default `nsm_key.pem`)
-- `HOST_DATA_FILE` (default `test-hosts.json`)
-- `PORT` (default `8080`)
-- `MDNS_SERVICE_NAME` (default `_nsm._tcp`)
-- `ANTHIAS_POLL_INTERVAL_SECS` (default `30`)
-- `TENDERMINT_RPC` (default `http://localhost:26657`)
-
-## Broadcasting transactions
-
-Transactions are signed JSON and submitted to Tendermint RPC as base64-encoded bytes.
-
-High-level flow:
-
-- Build a `types.Transaction` (e.g., `TxUpdateStatus`).
-- Sign it with your node identity to get `types.SignedTransaction`.
-- Broadcast via `internal/tendermint.BroadcastClient`.
-
-Example (Go):
-
-```go
-id := identity.NewIdentity(privKey)
-bc := tendermint.NewBroadcastClient("http://localhost:26657")
-
-payload := types.UpdateStatusPayload{Status: "Online", LastSeen: time.Now()}
-payloadBytes, _ := json.Marshal(payload)
-
-tx := &types.Transaction{
-    Type:      types.TxUpdateStatus,
-    Timestamp: time.Now(),
-    Payload:   payloadBytes,
-}
-
-stx, _ := tx.Sign(id)
-hash, err := bc.BroadcastSignedTransaction(stx)
-if err != nil {
-    log.Fatalf("broadcast failed: %v", err)
-}
-log.Printf("tx hash: %s", hash)
+```bash
+go run main.go
 ```
 
-Notes
+The first launch creates `hosts.db`, migrates any legacy `hosts.json`, and adds the current node. Visit `http://localhost:8080` to manage the roster. Set `PORT` to override the default listener.
 
-- Tendermint JSON-RPC expects the `tx` parameter to be base64, even if the payload itself is JSON. The included client handles this automatically.
-- For critical paths, use `BroadcastSignedTransactionCommit` to wait for inclusion in a block.
+## Deploying to a fleet
 
-## Anthias polling
+Use the Go-based deployer to build once and copy the binary plus web assets to every test host:
 
-`nsm` includes a background poller that periodically:
+```bash
+go run cmd/deployer/main.go --hosts all --parallel 4
+```
 
-- Commits an `add_host` for this node (once, to register the signer), and
-- Broadcasts `update_status` when the local Anthias status changes.
+Key flags:
 
-Knobs
+- `--hosts` – comma-separated IPs or `all` for the default VirtualBox lab
+- `--parallel` – concurrency limit for rsync + SSH operations
+- `--skip-build` – reuse the existing `nsm` binary
+- `--remote-dir` – target directory on the remote host (default `/home/nsm/nsm-app`)
 
-- `ANTHIAS_POLL_INTERVAL_SECS` controls the poll cadence.
-- `TENDERMINT_RPC` points to the Tendermint RPC endpoint (default `http://localhost:26657`).
+The deployer stops any running instance, wipes the remote directory, synchronizes the binary and HTMX assets, and relaunches the service in the background using `setsid` + `nohup`.
 
-## ⚖️ Licensing
+## API surface
 
-`nsm` is a dual-licensed project.
+- `GET /api/health` – health probe for the local service
+- `GET /api/version` – returns the running NSM build identifier
+- `GET /api/hosts` – returns the current host list
+- `POST /api/hosts/add` – append a host (expects JSON payload)
+- `POST /api/hosts/update` – edit an existing host by IP
+- `POST /api/hosts/delete?ip=<ip>` – remove a host
+- `POST /api/hosts/check` – trigger a background health sweep
+- `POST /api/hosts/check-stream` – Server-Sent Events stream for sweep progress
+- `POST /api/hosts/push` – broadcast the current list to every other host
+- `POST /api/hosts/receive` – replace the local list (creates a timestamped SQLite snapshot first and rotates prior copies)
+- `POST /api/hosts/reboot` – forward reboot requests to an Anthias player
+- `POST /api/hosts/upgrade` – forward package upgrade requests
 
-* **Community Edition (Open Source):** Licensed under the **GPLv3** (see `LICENSE`). We chose the GPLv3 to ensure the project and its core remain open and free forever.
-* **Commercial License:** For businesses and use cases incompatible with the GPLv3 (e.g., closed-source applications, proprietary firmware), a commercial license is available from NDX Pty Ltd. See `COMMERCIAL-LICENSE.md` for details.
+## Development workflow
 
-### Contributing
+- Run the test suite: `go test ./...`
+- Format Go code with `gofmt -w`
+- Dashboard tweaks live in `internal/web/home-view.html` and `internal/web/layout.html`
+- Host persistence (`hosts.db` + backups), health checks, and snapshot helpers live under `internal/hosts`
 
-We welcome community contributions! Please note that all contributors are required to sign a **Contributor License Agreement (CLA)**. This is necessary to allow NDX Pty Ltd to offer the dual-license model that funds the project's long-term development.
+## Licensing and commercial support
 
-For more details, please see our `CONTRIBUTING.md` file.
+- Community edition: GPLv3 (see `LICENSE`)
+- Commercial license: contact NDX Pty Ltd (details in `COMMERCIAL-LICENSE.md`)
+
+## Contributing
+
+Read `CONTRIBUTING.md` for the dual-licensing rationale and CLA process. Contributions that include tests and documentation updates are greatly appreciated.

@@ -1,21 +1,21 @@
-# **nexSign mini (NSM) Commercial License**
+# nexSign mini commercial license
 
-This document outlines the option for obtaining a commercial license for the nexSign mini (NSM) software.
+This document explains when you need a commercial license and how to request one.
 
-## When Do I Need a Commercial License?
+## When to purchase
 
-The NSM software is licensed by default under the **GNU General Public License v3 (GPLv3)**, a "copyleft" license. You are free to use it under the terms of the GPLv3, which includes the obligation to share your source code if you distribute a modified version or a program that links to it.
+The project is GPLv3 by default. Purchase a commercial license when you cannot meet the obligations of GPLv3, for example if you intend to:
 
-You will need a **commercial license** if your use case does not allow you to meet the GPLv3 obligations. Common commercial use cases include:
+- ship NSM inside a closed-source product
+- embed NSM in firmware where source redistribution is not possible
+- obtain commercial support, SLAs, or custom development from NDX Pty Ltd
 
-* Distributing NSM as part of a proprietary, closed-source application.
-* Integrating NSM into a hardware device where you do not wish to (or cannot) share the full source code for the device's firmware.
-* Wanting to receive commercial-grade support and maintenance from NDX Pty Ltd.
+## What the license provides
 
-## Acquiring a Commercial License
+- permission to distribute NSM in proprietary products without GPLv3 obligations
+- access to commercial support channels
+- optional addenda covering bespoke engineering work
 
-The commercial license grants you a "GPL exception," freeing you from the copyleft requirements of the GPLv3 and allowing you to embed NSM in your proprietary products.
+## Contact
 
-To inquire about a commercial license, please contact NDX Pty Ltd at:
-
-**licensing@ndx.video**
+For pricing and terms email `licensing@ndx.video`.
