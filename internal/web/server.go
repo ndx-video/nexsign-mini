@@ -8,8 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"os/exec"
 	"time"
 
 	"nexsign.mini/nsm/internal/anthias"
@@ -67,6 +70,7 @@ func (s *Server) Start() {
 	http.HandleFunc("/api/hosts/check", s.handleCheckHosts)
 	http.HandleFunc("/api/hosts/push", s.handlePushHosts)
 	http.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
+	http.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	go func() {
@@ -166,7 +170,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var updateReq struct {
-		OldIP    string `json:"old_ip"`
+		OldIP     string `json:"old_ip"`
 		IPAddress string `json:"ip_address"`
 		Hostname  string `json:"hostname"`
 	}
@@ -303,6 +307,92 @@ func (s *Server) handleReceiveHosts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleRebootHost handles reboot requests for hosts
+func (s *Server) handleRebootHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get the target IP and origin from request
+	var req struct {
+		TargetIP string `json:"target_ip"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetIP == "" {
+		http.Error(w, "target_ip is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the origin IP from the request
+	originIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(originIP); err == nil {
+		originIP = host
+	}
+
+	// If the target is localhost, execute the reboot
+	localHost, err := s.anthias.GetMetadata()
+	if err != nil {
+		log.Printf("Error getting local metadata: %v", err)
+		http.Error(w, "Failed to determine local host", http.StatusInternalServerError)
+		return
+	}
+
+	if req.TargetIP == localHost.IPAddress || req.TargetIP == "127.0.0.1" {
+		// This is a reboot request for THIS host
+		log.Printf("REBOOT REQUEST received from %s for local host %s", originIP, req.TargetIP)
+
+		// Execute the reboot sequence
+		go func() {
+			log.Println("Initiating safe reboot sequence...")
+			log.Println("Step 1: Stopping Docker engine...")
+
+			// Stop docker engine
+			if err := exec.Command("systemctl", "stop", "docker").Run(); err != nil {
+				log.Printf("Warning: Failed to stop docker: %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			log.Println("Step 2: Requesting system reboot...")
+
+			// Reboot the system
+			if err := exec.Command("systemctl", "reboot").Run(); err != nil {
+				log.Printf("Error: Failed to initiate reboot: %v", err)
+			}
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "rebooting",
+			"message": "Reboot sequence initiated",
+		})
+		return
+	}
+
+	// Forward the reboot request to the target host
+	targetURL := fmt.Sprintf("http://%s:8080/api/hosts/reboot", req.TargetIP)
+	reqBody, _ := json.Marshal(req)
+
+	resp, err := http.Post(targetURL, "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		log.Printf("Failed to forward reboot request to %s: %v", req.TargetIP, err)
+		http.Error(w, "Failed to reach target host", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Forward the response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // setCacheHeaders sets cache-busting headers to prevent browser caching.

@@ -47,12 +47,12 @@ func (c *Client) GetMetadata() (*types.Host, error) {
 	// For now, we'll use system checks since Anthias API may not be running
 	host.AnthiasVersion = getAnthiasVersion()
 	host.AnthiasStatus = getAnthiasStatus()
-	
-	// Set dashboard URL
+
+	// Set dashboard URL (Anthias listens on port 80)
 	if host.IPAddress != "" && host.IPAddress != "127.0.0.1" {
-		host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
+		host.DashboardURL = fmt.Sprintf("http://%s", host.IPAddress)
 	} else {
-		host.DashboardURL = "http://localhost:8080"
+		host.DashboardURL = "http://localhost"
 	}
 
 	return host, nil
@@ -89,7 +89,7 @@ func getAnthiasVersion() string {
 func getAnthiasStatus() string {
 	// TODO: Query actual Anthias API health endpoint when available
 	// For now, we'll check if we can connect to the expected port
-	
+
 	// Try to check systemd service status
 	cmd := exec.Command("systemctl", "is-active", "anthias")
 	output, err := cmd.Output()

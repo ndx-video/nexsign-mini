@@ -55,7 +55,24 @@
                         {{end}}
                     </span>
                 </td>
-                <td class="px-4 py-2 text-desert-tan">{{.AnthiasStatus}}</td>
+                <td class="px-4 py-2">
+                    {{if eq .CMSStatus "CMS Online"}}
+                    <button class="text-green-400 hover:text-green-300 cursor-pointer underline" 
+                            onclick="loadAnthiasDashboard('{{.IPAddress}}')">
+                        CMS Online
+                    </button>
+                    {{else if eq .CMSStatus "CMS Offline"}}
+                    <button class="text-red-400 hover:text-red-300 cursor-pointer underline"
+                            hx-post="/api/hosts/reboot"
+                            hx-vals='{"target_ip":"{{.IPAddress}}"}'
+                            hx-confirm="Reboot host {{.IPAddress}}? This will stop Docker and restart the system."
+                            hx-swap="none">
+                        CMS Offline
+                    </button>
+                    {{else}}
+                    <span class="text-gray-400">CMS Unknown</span>
+                    {{end}}
+                </td>
                 <td class="px-4 py-2 text-xs text-desert-gray">{{.LastChecked.Format "15:04:05"}}</td>
                 <td class="px-4 py-2">
                     <button class="edit-btn text-desert-cyan hover:text-desert-yellow mr-2" title="Edit">✏️</button>
@@ -121,6 +138,49 @@
     </div>
     {{end}}
 </div>
+
+<!-- Anthias Dashboard Viewer -->
+<div id="anthias-viewer" class="mt-6 hidden">
+    <div class="bg-desert-gray rounded-lg p-4">
+        <div class="flex justify-between items-center mb-3">
+            <h3 class="text-lg font-semibold text-desert-fg">
+                Anthias Dashboard: <span id="anthias-viewer-ip" class="text-desert-cyan"></span>
+            </h3>
+            <button onclick="closeAnthiasDashboard()" 
+                    class="text-red-400 hover:text-red-300 text-xl">
+                ✕
+            </button>
+        </div>
+        <iframe id="anthias-iframe" 
+                src="" 
+                class="w-full bg-white rounded"
+                style="height: 70vh; border: 2px solid #4A5568;">
+        </iframe>
+    </div>
+</div>
+
+<script>
+function loadAnthiasDashboard(ip) {
+    const viewer = document.getElementById('anthias-viewer');
+    const iframe = document.getElementById('anthias-iframe');
+    const ipSpan = document.getElementById('anthias-viewer-ip');
+    
+    iframe.src = 'http://' + ip;
+    ipSpan.textContent = ip;
+    viewer.classList.remove('hidden');
+    
+    // Scroll to viewer
+    viewer.scrollIntoView({ behavior: 'smooth' });
+}
+
+function closeAnthiasDashboard() {
+    const viewer = document.getElementById('anthias-viewer');
+    const iframe = document.getElementById('anthias-iframe');
+    
+    viewer.classList.add('hidden');
+    iframe.src = '';
+}
+</script>
 
 <script>
 // Inline editing functionality
