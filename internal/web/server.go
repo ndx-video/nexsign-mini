@@ -23,9 +23,10 @@ import (
 
 // TemplateData holds the data to be passed to the HTML template.
 type TemplateData struct {
-	Hosts         []types.Host
-	SelectedHost  *types.Host
-	CurrentHostIP string
+	Hosts          []types.Host
+	SelectedHost   *types.Host
+	CurrentHostIP  string
+	CurrentVersion string
 }
 
 // Server is the web server for the dashboard and API.
@@ -94,7 +95,8 @@ func (s *Server) Start() <-chan error {
 func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
-	err := s.templates.ExecuteTemplate(w, "layout.html", nil)
+	// Pass current version so layout can display it in the header
+	err := s.templates.ExecuteTemplate(w, "layout.html", TemplateData{CurrentVersion: types.Version})
 	if err != nil {
 		log.Printf("Error executing layout template: %s", err)
 		http.Error(w, "Failed to render page", http.StatusInternalServerError)
@@ -109,8 +111,9 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := TemplateData{
-		Hosts:         s.store.GetAll(),
-		CurrentHostIP: currentIP,
+		Hosts:          s.store.GetAll(),
+		CurrentHostIP:  currentIP,
+		CurrentVersion: types.Version,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
@@ -444,6 +447,19 @@ func (s *Server) handlePushHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional list of specific target IPs to push to
+	var req struct {
+		Targets []string `json:"targets"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	targetSet := map[string]struct{}{}
+	for _, t := range req.Targets {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			targetSet[t] = struct{}{}
+		}
+	}
+
 	allHosts := s.store.GetAll()
 	hostListJSON, err := json.Marshal(allHosts)
 	if err != nil {
@@ -457,6 +473,13 @@ func (s *Server) handlePushHosts(w http.ResponseWriter, r *http.Request) {
 	for _, host := range allHosts {
 		if host.IPAddress == "127.0.0.1" {
 			continue
+		}
+
+		// If a target list is provided, only include those
+		if len(targetSet) > 0 {
+			if _, ok := targetSet[host.IPAddress]; !ok {
+				continue
+			}
 		}
 
 		go func(h types.Host) {

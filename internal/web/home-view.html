@@ -8,13 +8,10 @@
      hx-select=".host-list"
      hx-target=".host-list">
 
-    <div class="mb-4 flex items-center gap-4">
-        <button
-            id="check-hosts-btn"
-            class="bg-desert-cyan hover:bg-desert-yellow text-desert-darkgray px-4 py-2 rounded"
-            onclick="checkAllHostsWithSSE()">
-            🔄 Check All Hosts
-        </button>
+    <div class="mb-4 flex items-center gap-4 flex-wrap">
+        <a class="text-desert-cyan hover:text-desert-yellow underline text-sm" onclick="checkAllHostsWithSSE()">Check all hosts</a>
+        <a class="text-green-400 hover:text-green-300 underline text-sm" onclick="pushSelected()">Push to selected hosts</a>
+        <a class="text-green-400/80 hover:text-green-300 underline text-xs" onclick="pushAll()">(push all)</a>
         <span class="text-desert-tan text-sm">
             Auto-refresh in <span id="countdown-container"><span id="countdown" class="font-bold text-desert-cyan">10</span>s</span>
         </span>
@@ -23,6 +20,7 @@
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
         <thead>
             <tr class="bg-desert-gray text-left text-desert-tan text-sm">
+                <th class="px-2 py-3 w-8 text-center"><input id="select-all" type="checkbox" onchange="toggleSelectAll(this)"></th>
                 <th class="px-4 py-3">Nickname [Hostname]</th>
                 <th class="px-4 py-3">LAN IP</th>
                 <th class="px-4 py-3">VPN IP</th>
@@ -35,6 +33,7 @@
         <tbody class="divide-y divide-desert-gray">
             {{range .Hosts}}
             <tr data-ip="{{.IPAddress}}" data-vpn="{{.VPNIPAddress}}" data-hostname="{{.Hostname}}">
+                <td class="px-2 py-2 align-top text-center"><input type="checkbox" class="row-select"></td>
                 <td class="px-4 py-2 align-top">
                     <div class="nickname-display text-desert-tan">
                         {{if .Nickname}}{{.Nickname}}{{else}}<span class="text-desert-gray italic">unnamed</span>{{end}}
@@ -79,12 +78,22 @@
                             </a>
                             {{else if eq .Status "stale"}}
                             <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
+                            <div class="flex flex-col leading-tight">
+                                <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf "http://%s:8080" .IPAddress}}{{end}}"
+                                   target="_blank" rel="noopener noreferrer"
+                                   class="text-green-400 hover:text-green-300 underline">
+                                    NSM Online (LAN)
+                                </a>
+                                <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
+                                    stale {{if .NSMVersion}}v{{.NSMVersion}}{{else}}unknown{{end}}
+                                </span>
+                            </div>
                             <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
                                     hx-post="/api/hosts/upgrade"
                                     hx-vals='{"target_ip":"{{.IPAddress}}"}'
                                     hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.IPAddress}}?"
                                     hx-swap="none">
-                                Stale (LAN)
+                                Upgrade
                             </button>
                             {{else if eq .Status "unhealthy"}}
                             <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
@@ -114,12 +123,22 @@
                             </a>
                             {{else if eq .StatusVPN "stale"}}
                             <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
+                            <div class="flex flex-col leading-tight">
+                                <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf "http://%s:8080" .VPNIPAddress}}{{end}}"
+                                   target="_blank" rel="noopener noreferrer"
+                                   class="text-green-400 hover:text-green-300 underline">
+                                    NSM Online (VPN)
+                                </a>
+                                <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
+                                    stale {{if .NSMVersionVPN}}v{{.NSMVersionVPN}}{{else}}unknown{{end}}
+                                </span>
+                            </div>
                             <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
                                     hx-post="/api/hosts/upgrade"
                                     hx-vals='{"target_ip":"{{.VPNIPAddress}}"}'
                                     hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.VPNIPAddress}}?"
                                     hx-swap="none">
-                                Stale (VPN)
+                                Upgrade
                             </button>
                             {{else if eq .StatusVPN "unhealthy"}}
                             <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
@@ -213,69 +232,25 @@
         </tbody>
     </table>
 
-    <div class="mt-6 p-4 bg-desert-gray rounded">
-        <h3 class="text-lg font-semibold mb-3 text-desert-fg">Add New Host</h3>
-        <form id="add-host-form" onsubmit="addHost(event)">
-            <div class="grid gap-4 md:grid-cols-2">
-                <div>
-                    <label for="new-nickname" class="block text-sm text-desert-tan mb-1">Nickname</label>
-                    <input type="text"
-                           id="new-nickname"
-                           name="nickname"
-                           placeholder="Lobby Display"
-                           class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan">
-                </div>
-                <div>
-                    <label for="new-lan-ip" class="block text-sm text-desert-tan mb-1">LAN IP *</label>
-                    <input type="text"
-                           id="new-lan-ip"
-                           name="ip_address"
-                           required
-                           placeholder="192.168.1.100"
-                           class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan font-mono">
-                </div>
-                <div>
-                    <label for="new-vpn-ip" class="block text-sm text-desert-tan mb-1">VPN IP (optional)</label>
-                    <input type="text"
-                           id="new-vpn-ip"
-                           name="vpn_ip_address"
-                           placeholder="100.64.0.15"
-                           class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan font-mono">
-                </div>
-                <div class="md:col-span-2">
-                    <label for="new-notes" class="block text-sm text-desert-tan mb-1">Notes</label>
-                    <textarea id="new-notes"
-                              name="notes"
-                              rows="2"
-                              placeholder="Mounting location, maintenance windows, etc."
-                              class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan"></textarea>
-                </div>
-                <div class="md:col-span-2 flex justify-end">
-                    <button type="submit"
-                            class="bg-desert-cyan hover:bg-desert-yellow text-desert-darkgray px-6 py-2 rounded font-semibold">
-                        Add Host
-                    </button>
-                </div>
-            </div>
+    <div class="mt-4 p-3 bg-desert-gray rounded">
+        <form id="add-host-form" onsubmit="addHost(event)" class="flex flex-wrap items-center gap-2">
+            <input type="text" id="new-nickname" name="nickname" placeholder="Nickname"
+                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan w-36" />
+            <input type="text" id="new-lan-ip" name="ip_address" required placeholder="LAN IP"
+                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
+            <input type="text" id="new-vpn-ip" name="vpn_ip_address" placeholder="VPN IP"
+                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
+            <input type="text" id="new-notes" name="notes" placeholder="Notes"
+                   class="flex-1 min-w-[200px] bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan" />
+            <button type="submit" class="text-desert-darkgray bg-desert-cyan hover:bg-desert-yellow px-3 py-1 rounded text-sm">Add</button>
         </form>
     </div>
 
-    {{if gt (len .Hosts) 1}}
-    <div class="mt-4">
-        <button
-            class="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded font-semibold"
-            hx-post="/api/hosts/push"
-            hx-swap="none"
-            hx-confirm="Push current host list to all other hosts?">
-            📤 Push to Other Hosts
-        </button>
-        <span class="ml-4 text-sm text-desert-gray">Push the current host list to all network members</span>
-    </div>
-    {{end}}
+    {{/* Push controls moved above */}}
 </div>
 
 <script>
-const HOST_TABLE_COLUMN_COUNT = 7;
+const HOST_TABLE_COLUMN_COUNT = 8;
 const ipv4Pattern = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 function validateIPv4(value) {
@@ -435,6 +410,43 @@ window.resetCountdown = function() {
     window.countdownValue = 10;
     window.updateCountdownDisplay();
 };
+
+window.toggleSelectAll = function(cb) {
+    document.querySelectorAll('.row-select').forEach(el => el.checked = cb.checked);
+}
+
+function getSelectedIPs() {
+    const ips = [];
+    document.querySelectorAll('tbody tr').forEach(tr => {
+        const checkbox = tr.querySelector('.row-select');
+        if (checkbox && checkbox.checked) {
+            const ip = tr.getAttribute('data-ip');
+            if (ip) ips.push(ip);
+        }
+    });
+    return ips;
+}
+
+window.pushSelected = function() {
+    const targets = getSelectedIPs();
+    if (targets.length === 0) {
+        alert('Select one or more hosts to push to.');
+        return;
+    }
+    fetch('/api/hosts/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targets })
+    }).then(() => {
+        setTimeout(() => window.triggerHostsRefresh(), 500);
+    }).catch(() => {});
+}
+
+window.pushAll = function() {
+    fetch('/api/hosts/push', { method: 'POST' }).then(() => {
+        setTimeout(() => window.triggerHostsRefresh(), 500);
+    }).catch(() => {});
+}
 
 window.enterEditMode = function(button) {
     const row = button.closest('tr');

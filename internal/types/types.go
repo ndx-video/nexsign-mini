@@ -8,7 +8,7 @@ import (
 )
 
 // Version is the current version of NSM
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // HostStatus represents the current health/reachability status of a host
 type HostStatus string

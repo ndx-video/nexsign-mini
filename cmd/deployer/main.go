@@ -183,8 +183,8 @@ func deployHost(host, keyPath, binaryPath, webDir, remoteDir string) error {
 	sshTarget := fmt.Sprintf("%s@%s", remoteUser, host)
 
 	// Ensure remote directory structure exists and stop existing binary.
-	if err := sshRun(sshTarget, keyPath, "pkill -f 'nsm$' || true", 10*time.Second); err != nil {
-		log.Printf("%s warning: stop existing binary: %v", logPrefix, err)
+	if err := stopRemoteBinary(sshTarget, keyPath); err != nil {
+		return fmt.Errorf("stop remote binary: %w", err)
 	}
 
 	prepCmd := fmt.Sprintf("rm -rf %[1]s && mkdir -p %[1]s/internal/web/static", remoteDir)
@@ -272,4 +272,14 @@ func rsyncCopy(src, dest, keyPath string) error {
 		log.Printf("[rsync] %s", out)
 	}
 	return nil
+}
+
+func stopRemoteBinary(target, keyPath string) error {
+	stopCmd := "pgrep -f 'nsm$' >/dev/null && pkill -TERM 'nsm$' || true"
+	if err := sshRun(target, keyPath, stopCmd, 15*time.Second); err != nil {
+		return err
+	}
+
+	waitCmd := "count=0; while pgrep -f 'nsm$' >/dev/null; do if [ \"$count\" -ge 15 ]; then exit 1; fi; count=$((count+1)); sleep 1; done"
+	return sshRun(target, keyPath, waitCmd, 20*time.Second)
 }
