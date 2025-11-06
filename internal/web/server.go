@@ -1,11 +1,10 @@
 // Package web implements the HTTP server and HTMX-backed dashboard for
-// nexSign mini. It serves templates and API endpoints that present the
-// distributed ledger's host list and provides UI-driven actions (e.g.
-// restart host) which are translated into signed transactions and
-// broadcast to the network.
+// nexSign mini. It serves templates and API endpoints for managing the
+// host list manually via a web UI.
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -13,39 +12,37 @@ import (
 	"net/http"
 	"time"
 
-	"nexsign.mini/nsm/internal/abci"
+	"nexsign.mini/nsm/internal/anthias"
+	"nexsign.mini/nsm/internal/hosts"
 	"nexsign.mini/nsm/internal/types"
 )
 
 // TemplateData holds the data to be passed to the HTML template.
 type TemplateData struct {
-	Hosts        map[string]types.Host
+	Hosts        []types.Host
 	SelectedHost *types.Host
 }
 
 // Server is the web server for the dashboard and API.
 type Server struct {
-	app       *abci.ABCIApplication
+	store     *hosts.Store
+	anthias   *anthias.Client
 	port      int
 	templates *template.Template
-	nodeID    string
 }
 
 // NewServer creates a new web server.
-func NewServer(app *abci.ABCIApplication, port int, opts ...func(*Server)) (*Server, error) {
+func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Server, error) {
 	templates, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
 	s := &Server{
-		app:       app,
+		store:     store,
+		anthias:   anthiasClient,
 		port:      port,
 		templates: templates,
-	}
-	// apply optional configurators
-	for _, opt := range opts {
-		opt(s)
 	}
 	return s, nil
 }
@@ -57,13 +54,19 @@ func (s *Server) Start() {
 	fs := http.FileServer(http.Dir("internal/web/static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
+	// Page routes
 	http.HandleFunc("/", s.handlePageLoad)
 	http.HandleFunc("/views/home", s.handleHomeView)
-	http.HandleFunc("/views/host", s.handleHostView)
-	http.HandleFunc("/views/advanced", s.handleAdvancedView)
+
+	// API routes
+	http.HandleFunc("/api/health", s.handleHealth)
 	http.HandleFunc("/api/hosts", s.handleGetHosts)
-	http.HandleFunc("/diagnostics", s.handleDiagnosticsPage)
-	http.HandleFunc("/ws/diagnostics", s.handleDiagnosticsWS)
+	http.HandleFunc("/api/hosts/add", s.handleAddHost)
+	http.HandleFunc("/api/hosts/update", s.handleUpdateHost)
+	http.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
+	http.HandleFunc("/api/hosts/check", s.handleCheckHosts)
+	http.HandleFunc("/api/hosts/push", s.handlePushHosts)
+	http.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	go func() {
@@ -84,12 +87,9 @@ func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
-	data := TemplateData{Hosts: s.app.GetState()}
+	data := TemplateData{Hosts: s.store.GetAll()}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
-
-	// Add current timestamp for client-side health calculation if needed
-	w.Header().Set("X-Server-Time", time.Now().Format(time.RFC3339))
 
 	err := s.templates.ExecuteTemplate(w, "home-view.html", data)
 	if err != nil {
@@ -98,113 +98,211 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleHostView(w http.ResponseWriter, r *http.Request) {
-	hostID := r.URL.Query().Get("host")
-	data := TemplateData{}
-
-	currentState := s.app.GetState()
-	if host, ok := currentState[hostID]; ok {
-		data.SelectedHost = &host
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.setCacheHeaders(w)
-	err := s.templates.ExecuteTemplate(w, "host-view.html", data)
-	if err != nil {
-		log.Printf("Error executing host-view template: %s", err)
-		http.Error(w, "Failed to render view", http.StatusInternalServerError)
-	}
+// Health check endpoint
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleGetHosts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.app.GetState()); err != nil {
+	if err := json.NewEncoder(w).Encode(s.store.GetAll()); err != nil {
 		log.Printf("Error encoding hosts to JSON: %s", err)
 		http.Error(w, "Failed to retrieve host list", http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.setCacheHeaders(w)
-	if err := s.templates.ExecuteTemplate(w, "advanced-view.html", nil); err != nil {
-		log.Printf("Error executing advanced-view template: %s", err)
-		http.Error(w, "Failed to render view", http.StatusInternalServerError)
+// handleAddHost adds a new host to the list
+func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+
+	var host types.Host
+	if err := json.NewDecoder(r.Body).Decode(&host); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if host.IPAddress == "" {
+		http.Error(w, "IP address is required", http.StatusBadRequest)
+		return
+	}
+
+	// Set initial status
+	host.Status = types.StatusUnreachable
+	host.LastChecked = time.Now()
+	if host.DashboardURL == "" {
+		host.DashboardURL = fmt.Sprintf("http://%s:8080", host.IPAddress)
+	}
+
+	if err := s.store.Add(host); err != nil {
+		log.Printf("Error adding host: %s", err)
+		http.Error(w, "Failed to add host", http.StatusInternalServerError)
+		return
+	}
+
+	// Check health of new host
+	go func() {
+		host.Status = hosts.CheckHealth(&host)
+		host.LastChecked = time.Now()
+		s.store.Update(host.IPAddress, func(h *types.Host) {
+			h.Status = host.Status
+			h.LastChecked = host.LastChecked
+		})
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleDiagnosticsPage serves a simple HTML page embedded via iframe that
-// demonstrates realtime updates over a websocket connection.
-func (s *Server) handleDiagnosticsPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.setCacheHeaders(w)
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <title>Diagnostics</title>
-</head>
-<body class="p-4 text-sm text-gray-800">
-  <div class="mb-2">Diagnostics stream:</div>
-  <pre id="out" class="bg-gray-100 rounded p-2 h-64 overflow-auto"></pre>
-  <script>
-	(function(){
-	  const out = document.getElementById('out');
-	  const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
-	  const url = proto + '://' + location.host + '/ws/diagnostics';
-	  function log(line){ out.textContent += line + "\n"; out.scrollTop = out.scrollHeight; }
-	  function connect(){
-		const ws = new WebSocket(url);
-		ws.onopen = () => log('[ws] connected');
-		ws.onmessage = (e) => log(e.data);
-		ws.onclose = () => { log('[ws] disconnected'); setTimeout(connect, 1500); };
-		ws.onerror = () => { try { ws.close(); } catch(e){} };
-	  }
-	  connect();
-	})();
-  </script>
- </body></html>`)
-}
+// handleUpdateHost updates an existing host
+func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-// WebSocket endpoint with SSE fallback
-func (s *Server) handleDiagnosticsWS(w http.ResponseWriter, r *http.Request) {
-	// Use gorilla/websocket upgrader (provided by websocket_shim.go)
-	if wsUpgrade, writer, ok := tryGorillaUpgrade(w, r); ok {
-		defer writer.Close()
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-		for t := range ticker.C {
-			payload := map[string]interface{}{
-				"time":        t.Format(time.RFC3339),
-				"node_id":     s.nodeID,
-				"hosts_count": len(s.app.GetState()),
-			}
-			b, _ := json.Marshal(payload)
-			_ = wsUpgrade.WriteMessage(1 /* TextMessage */, b)
+	var updateReq struct {
+		OldIP    string `json:"old_ip"`
+		IPAddress string `json:"ip_address"`
+		Hostname  string `json:"hostname"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err := s.store.Update(updateReq.OldIP, func(h *types.Host) {
+		if updateReq.IPAddress != "" {
+			h.IPAddress = updateReq.IPAddress
+			h.DashboardURL = fmt.Sprintf("http://%s:8080", updateReq.IPAddress)
 		}
+		if updateReq.Hostname != "" {
+			h.Hostname = updateReq.Hostname
+		}
+	})
+
+	if err != nil {
+		log.Printf("Error updating host: %s", err)
+		http.Error(w, "Failed to update host", http.StatusInternalServerError)
 		return
 	}
-	// Fallback to SSE
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	for t := range ticker.C {
-		fmt.Fprintf(w, "data: %s\n\n", fmt.Sprintf(`{"time":"%s","node_id":"%s","hosts_count":%d}`, t.Format(time.RFC3339), s.nodeID, len(s.app.GetState())))
-		flusher.Flush()
-	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// Option helpers
-func WithNodeID(id string) func(*Server) {
-	return func(s *Server) { s.nodeID = id }
+// handleDeleteHost removes a host from the list
+func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ip := r.URL.Query().Get("ip")
+	if ip == "" {
+		http.Error(w, "IP address parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.Delete(ip); err != nil {
+		log.Printf("Error deleting host: %s", err)
+		http.Error(w, "Failed to delete host", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleCheckHosts triggers health check on all hosts
+func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go s.store.CheckAllHosts()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "checking"})
+}
+
+// handlePushHosts pushes the current host list to all other hosts
+func (s *Server) handlePushHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	allHosts := s.store.GetAll()
+	hostListJSON, err := json.Marshal(allHosts)
+	if err != nil {
+		http.Error(w, "Failed to marshal host list", http.StatusInternalServerError)
+		return
+	}
+
+	results := make(map[string]string)
+
+	// Push to each host (except localhost)
+	for _, host := range allHosts {
+		if host.IPAddress == "127.0.0.1" {
+			continue
+		}
+
+		go func(h types.Host) {
+			url := fmt.Sprintf("http://%s:8080/api/hosts/receive", h.IPAddress)
+			resp, err := http.Post(url, "application/json", bytes.NewBuffer(hostListJSON))
+			if err != nil {
+				log.Printf("Failed to push to %s: %v", h.IPAddress, err)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				log.Printf("Successfully pushed host list to %s", h.IPAddress)
+			} else {
+				log.Printf("Failed to push to %s: HTTP %d", h.IPAddress, resp.StatusCode)
+			}
+		}(host)
+
+		results[host.IPAddress] = "pushed"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "ok",
+		"results": results,
+	})
+}
+
+// handleReceiveHosts receives pushed host list from another host
+func (s *Server) handleReceiveHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var hosts []types.Host
+	if err := json.NewDecoder(r.Body).Decode(&hosts); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.ReplaceAll(hosts); err != nil {
+		log.Printf("Error replacing host list: %s", err)
+		http.Error(w, "Failed to update host list", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Received and updated host list from remote host (count: %d)", len(hosts))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // setCacheHeaders sets cache-busting headers to prevent browser caching.

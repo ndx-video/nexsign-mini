@@ -4,26 +4,80 @@ This file contains concise, actionable notes for automated coding agents working
 
 Key guidance (keep answers short and code-focused):
 
-- Read entrypoint: `cmd/nsm/main.go` to understand startup order (identity -> initial state -> abci -> discovery -> anthias client -> web).
-- Primary domain code lives under `internal/` (abci, anthias, discovery, identity, web, ledger/types).
-- Hosts are indexed by node public key (hex of ed25519 public key). See `internal/types/types.go` and `internal/abci/app.go` for transaction and state handling.
+- Read entrypoint: `main.go` to understand startup order (host store -> Anthias client -> web server).
+- Primary domain code lives under `internal/` (hosts, anthias, web, types).
+- Hosts are indexed by IP address. See `internal/types/types.go` and `internal/hosts/store.go` for host management.
 
 Essential files to reference in pull requests and changes:
 
-- `cmd/nsm/main.go` — startup, environment knobs, logger configuration
-- `internal/abci/app.go` — transaction validation, DeliverTx logic, response codes
-- `internal/types/types.go` — definitions for `Host`, `Transaction`, `SignedTransaction`, and payloads
-- `internal/web/server.go` and `internal/web/*.html` — API handlers and HTMX templates
+- `main.go` — startup, environment knobs, logger configuration
+- `internal/hosts/store.go` — host list management, JSON persistence
+- `internal/hosts/health.go` — health checking logic
+- `internal/types/types.go` — definitions for `Host` and `HostStatus`
+- `internal/web/server.go` — API handlers and routes
+- `internal/web/home-view.html` — HTMX dashboard template
 
 Environments and common dev commands
 
 - Defaults found in code (override with env vars):
-  - `KEY_FILE=nsm_key.pem`
-  - `HOST_DATA_FILE=test-hosts.json`
   - `PORT=8080`
-  - `MDNS_SERVICE_NAME=_nsm._tcp`
 
 - Run locally:
+```bash
+go run main.go
+```
+- Build & test:
+```bash
+go build
+go test ./...
+```
+
+Key files and where to look
+
+- `main.go` — startup order and env knobs
+- `internal/hosts/store.go` — thread-safe host list management with JSON persistence
+- `internal/hosts/health.go` — health checking (TCP + HTTP verification)
+- `internal/types/types.go` — `Host` struct and `HostStatus` constants
+- `internal/web/` — HTMX templates and `server.go` (dashboard + API)
+
+Conventions and important rules (project-specific)
+
+- Data Storage: `hosts.json` is the source of truth for the host list. Created automatically if missing.
+- Host Management: All operations go through the `hosts.Store` for thread-safety.
+- Status Values: `unreachable`, `connection_refused`, `unhealthy`, `healthy`
+- API Authentication: None - designed for Tailnet deployments
+- Synchronization: Manual push via "Push to Other Hosts" button
+
+Roadmap & priorities (developer-facing highlights)
+
+- Phase 1-3: Core functionality complete (manual host management, health checking, web UI)
+- Phase 4 priority: UI/UX improvements, WebSocket support, better error handling
+- Phase 5 priority: Testing, deployment automation, optional HTTPS/auth for non-Tailnet deployments
+
+Practical snippets and commands
+
+- Build:
+```bash
+go build -o nsm
+```
+- Run with custom port:
+```bash
+PORT=9090 go run main.go
+```
+
+Checklist for automated edits
+
+1. Run `go test ./...` before creating a PR.
+2. Add unit tests when modifying host store or health checking logic.
+3. Keep changes minimal and focused on one feature at a time.
+
+Architecture notes
+
+- No distributed ledger - simple HTTP-based synchronization
+- No authentication - relies on Tailnet for security
+- No mDNS discovery - hosts added manually
+- No cryptographic signing - trust-all model
+- Localhost always included automatically from Anthias client polling
 ```bash
 ```markdown
 # copilot-instructions for nexSign mini (nsm)

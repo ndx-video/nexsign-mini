@@ -1,37 +1,186 @@
-<h2 class="text-xl font-semibold mb-3 text-desert-fg">Discovered Hosts</h2>
+<h2 class="text-xl font-semibold mb-3 text-desert-fg">Signage Host Network</h2>
+
 <div class="host-list" 
      hx-get="/views/home" 
-     hx-trigger="every 3s" 
+     hx-trigger="every 5s" 
      hx-swap="innerHTML"
      hx-select=".host-list"
      hx-target=".host-list">
+    
+    <div class="mb-4">
+        <button 
+            class="bg-desert-cyan hover:bg-desert-yellow text-desert-darkgray px-4 py-2 rounded"
+            hx-post="/api/hosts/check"
+            hx-swap="none">
+            🔄 Check All Hosts
+        </button>
+    </div>
+
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
         <thead>
             <tr class="bg-desert-gray text-left text-desert-tan text-sm">
-                <th class="px-4 py-3">Hostname</th>
                 <th class="px-4 py-3">IP Address</th>
-                <th class="px-4 py-3">Version</th>
+                <th class="px-4 py-3">Hostname</th>
                 <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Anthias</th>
+                <th class="px-4 py-3">Last Checked</th>
                 <th class="px-4 py-3">Actions</th>
             </tr>
         </thead>
         <tbody class="divide-y divide-desert-gray">
             {{range .Hosts}}
-            {{$health := healthStatus .}}
-            <tr>
-                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" hx-get="/views/host?host={{.PublicKey}}" hx-target="#content-area" hx-push-url="/?host={{.PublicKey}}">{{.Hostname}}</a></td>
-                <td class="px-4 py-2 text-desert-tan">{{.IPAddress}}</td>
-                <td class="px-4 py-2 text-desert-tan">{{.AnthiasVersion}}</td>
+            <tr data-ip="{{.IPAddress}}">
+                <td class="px-4 py-2">
+                    <span class="ip-display text-desert-tan">{{.IPAddress}}</span>
+                    <input type="text" class="ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded" value="{{.IPAddress}}">
+                </td>
+                <td class="px-4 py-2">
+                    <span class="hostname-display text-desert-tan">{{.Hostname}}</span>
+                    <input type="text" class="hostname-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded" value="{{.Hostname}}">
+                </td>
                 <td class="px-4 py-2">
                     <span class="inline-flex items-center gap-2">
-                        <span class="status-indicator {{healthColor $health}} w-2 h-2 rounded-full" title="{{healthDesc $health}}"></span>
-                        <span class="text-desert-tan">{{$health}}</span>
-                        <span class="text-xs text-desert-gray">({{timeSince .LastSeen}})</span>
+                        {{if eq .Status "healthy"}}
+                        <span class="w-2 h-2 rounded-full bg-green-500" title="Healthy"></span>
+                        <span class="text-green-400">Healthy</span>
+                        {{else if eq .Status "unhealthy"}}
+                        <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
+                        <span class="text-yellow-400">Unhealthy</span>
+                        {{else if eq .Status "connection_refused"}}
+                        <span class="w-2 h-2 rounded-full bg-orange-500" title="Connection Refused"></span>
+                        <span class="text-orange-400">Connection Refused</span>
+                        {{else}}
+                        <span class="w-2 h-2 rounded-full bg-red-500" title="Unreachable"></span>
+                        <span class="text-red-400">Unreachable</span>
+                        {{end}}
                     </span>
                 </td>
-                <td class="px-4 py-2"><a class="text-desert-cyan hover:text-desert-yellow cursor-pointer" href="/api/hosts?host={{.PublicKey}}" target="_blank">API</a></td>
+                <td class="px-4 py-2 text-desert-tan">{{.AnthiasStatus}}</td>
+                <td class="px-4 py-2 text-xs text-desert-gray">{{.LastChecked.Format "15:04:05"}}</td>
+                <td class="px-4 py-2">
+                    <button class="edit-btn text-desert-cyan hover:text-desert-yellow mr-2" title="Edit">✏️</button>
+                    <button class="save-btn hidden text-green-400 hover:text-green-300 mr-2" title="Save">💾</button>
+                    <button class="cancel-btn hidden text-gray-400 hover:text-gray-300 mr-2" title="Cancel">❌</button>
+                    <button 
+                        class="text-red-400 hover:text-red-300" 
+                        title="Delete"
+                        hx-post="/api/hosts/delete?ip={{.IPAddress}}"
+                        hx-confirm="Delete host {{.IPAddress}}?"
+                        hx-target="closest tr"
+                        hx-swap="outerHTML swap:1s">🗑️</button>
+                </td>
             </tr>
             {{end}}
         </tbody>
     </table>
+
+    <!-- Add New Host Form -->
+    <div class="mt-6 p-4 bg-desert-gray rounded">
+        <h3 class="text-lg font-semibold mb-3 text-desert-fg">Add New Host</h3>
+        <form hx-post="/api/hosts/add" hx-swap="none" hx-on::after-request="this.reset()">
+            <div class="flex gap-4">
+                <div class="flex-1">
+                    <label class="block text-sm text-desert-tan mb-1">IP Address *</label>
+                    <input 
+                        type="text" 
+                        name="ip_address" 
+                        required
+                        placeholder="192.168.1.100"
+                        class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan">
+                </div>
+                <div class="flex-1">
+                    <label class="block text-sm text-desert-tan mb-1">Hostname (optional)</label>
+                    <input 
+                        type="text" 
+                        name="hostname" 
+                        placeholder="display-1"
+                        class="w-full bg-desert-darkgray text-desert-fg px-3 py-2 rounded border border-desert-gray focus:border-desert-cyan">
+                </div>
+                <div class="flex items-end">
+                    <button 
+                        type="submit"
+                        class="bg-desert-cyan hover:bg-desert-yellow text-desert-darkgray px-6 py-2 rounded font-semibold">
+                        Add Host
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Push to Network Button -->
+    {{if gt (len .Hosts) 1}}
+    <div class="mt-4">
+        <button 
+            class="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded font-semibold"
+            hx-post="/api/hosts/push"
+            hx-swap="none"
+            hx-confirm="Push current host list to all other hosts?">
+            📤 Push to Other Hosts
+        </button>
+        <span class="ml-4 text-sm text-desert-gray">Push the current host list to all network members</span>
+    </div>
+    {{end}}
 </div>
+
+<script>
+// Inline editing functionality
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            const row = e.target.closest('tr');
+            row.querySelector('.ip-display').classList.add('hidden');
+            row.querySelector('.ip-edit').classList.remove('hidden');
+            row.querySelector('.hostname-display').classList.add('hidden');
+            row.querySelector('.hostname-edit').classList.remove('hidden');
+            row.querySelector('.edit-btn').classList.add('hidden');
+            row.querySelector('.save-btn').classList.remove('hidden');
+            row.querySelector('.cancel-btn').classList.remove('hidden');
+        });
+    });
+
+    document.querySelectorAll('.cancel-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            const row = e.target.closest('tr');
+            row.querySelector('.ip-display').classList.remove('hidden');
+            row.querySelector('.ip-edit').classList.add('hidden');
+            row.querySelector('.hostname-display').classList.remove('hidden');
+            row.querySelector('.hostname-edit').classList.add('hidden');
+            row.querySelector('.edit-btn').classList.remove('hidden');
+            row.querySelector('.save-btn').classList.add('hidden');
+            row.querySelector('.cancel-btn').classList.add('hidden');
+        });
+    });
+
+    document.querySelectorAll('.save-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            const row = e.target.closest('tr');
+            const oldIP = row.dataset.ip;
+            const newIP = row.querySelector('.ip-edit').value;
+            const newHostname = row.querySelector('.hostname-edit').value;
+
+            fetch('/api/hosts/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    old_ip: oldIP,
+                    ip_address: newIP,
+                    hostname: newHostname
+                })
+            }).then(resp => {
+                if (resp.ok) {
+                    row.dataset.ip = newIP;
+                    row.querySelector('.ip-display').textContent = newIP;
+                    row.querySelector('.hostname-display').textContent = newHostname;
+                    row.querySelector('.ip-display').classList.remove('hidden');
+                    row.querySelector('.ip-edit').classList.add('hidden');
+                    row.querySelector('.hostname-display').classList.remove('hidden');
+                    row.querySelector('.hostname-edit').classList.add('hidden');
+                    row.querySelector('.edit-btn').classList.remove('hidden');
+                    row.querySelector('.save-btn').classList.add('hidden');
+                    row.querySelector('.cancel-btn').classList.add('hidden');
+                }
+            });
+        });
+    });
+});
+</script>

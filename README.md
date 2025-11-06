@@ -1,44 +1,45 @@
 # nexSign mini (nsm)
 
-`nsm` is a decentralized service written in Go that provides automatic discovery, monitoring, and *management* for a network of [Anthias](https://www.anthias.io/) digital signage players.
+`nsm` is a lightweight service written in Go that provides manual network management and monitoring for a network of [Anthias](https://www.anthias.io/) digital signage players.
 
 ## Project Goals
 
-The primary goal of `nsm` is to create a zero-configuration, resilient, and lightweight monitoring and management solution for Anthias hosts, especially those running on System-on-Chip (SoC) hardware. It achieves this by:
+The primary goal of `nsm` is to create a simple, lightweight monitoring and management solution for Anthias hosts, especially those running on System-on-Chip (SoC) hardware. It achieves this by:
 
-1.  **Automatic Discovery:** `nsm` instances automatically find each other on the local network using mDNS, requiring no central server.
-2.  **Distributed State & Audit:** It maintains a distributed ledger of all known Anthias hosts using the Tendermint consensus engine. This ledger stores host metadata and provides an **immutable, signed audit log** for all management actions.
-3.  **Centralized Interface:** It provides a simple web dashboard that aggregates all discovered Anthias players, allowing users to monitor status and manage hosts from a single interface.
+1.  **Manual Host Management:** `nsm` provides a simple web dashboard where users can manually add, edit, and remove Anthias hosts on their network.
+2.  **Network Synchronization:** Host lists can be manually pushed to all other `nsm` instances on the network, keeping the fleet in sync.
+3.  **Centralized Interface:** It provides a simple web dashboard that displays all managed Anthias players, allowing users to monitor status and manage hosts from a single interface.
 4.  **API First:** The service includes a simple REST API to allow for integration with third-party services (e.g., n8n, Kestra).
+5.  **Tailnet-Ready:** Designed to work seamlessly with Tailscale/Tailnet for secure network access without complex authentication.
 
 ## Architecture
 
 The `nsm` service is composed of several key components:
 
-* **Node Identity:** On first boot, each `nsm` instance generates a persistent `ed25519` keypair (`nsm_key.pem`). The **public key** serves as the node's permanent, unique ID within the distributed network.
-* **mDNS Discovery:** A service that constantly browses for and announces `_nsm._tcp` services on the local network.
-* **Tendermint Consensus (ABCI):** An application that interfaces with Tendermint Core. It manages the state of the distributed ledger and processes two types of transactions:
-    * **State Transactions:** (e.g., `add_host`, `update_status`) for updating host metadata.
-    * **Action Transactions:** (e.g., `restart_host`) which are signed by the originating node and executed by the target node, providing a built-in audit trail.
+* **Host Store:** Manages the `hosts.json` file which stores the list of all Anthias hosts. If the file doesn't exist at startup, it's created automatically.
+* **Health Checker:** Periodically checks the health status of each host (unreachable, connection refused, unhealthy, healthy).
 * **Anthias Client:** A component that polls the local Anthias instance to gather its status and metadata.
 * **Web Server:** A native Go web server serving:
-    * A web dashboard (using HTMX) with an `<iframe>` to display the selected Anthias host's UI.
-    * A JSON REST API for external integrations.
+    * A web dashboard (using HTMX) for managing the host list.
+    * A JSON REST API for external integrations and host synchronization.
 
 ### Host Data Model
 
-The core data structure for each host stored in the ledger (mirrors `internal/types/Host`):
+The core data structure for each host stored in `hosts.json`:
 
 ```go
 type Host struct {
-    Hostname       string `json:"hostname"`
-    IPAddress      string `json:"ip_address"`
-    AnthiasVersion string `json:"anthias_version"`
-    AnthiasStatus  string `json:"anthias_status"`
-    DashboardURL   string `json:"dashboard_url"`
-    PublicKey      string `json:"public_key"` // hex-encoded ED25519 public key
+    IPAddress      string     `json:"ip_address"`      // Required: IP address of the host
+    Hostname       string     `json:"hostname"`        // Optional: friendly name for the host
+    Status         HostStatus `json:"status"`          // Health status
+    AnthiasVersion string     `json:"anthias_version"` // Detected Anthias version
+    AnthiasStatus  string     `json:"anthias_status"`  // Anthias service status
+    DashboardURL   string     `json:"dashboard_url"`   // URL to host's dashboard
+    LastChecked    time.Time  `json:"last_checked"`    // Last time status was checked
 }
 ```
+
+Status values: `unreachable`, `connection_refused`, `unhealthy`, `healthy`
 
 ---
 
@@ -46,81 +47,72 @@ type Host struct {
 
 Prereqs
 
-- Linux native filesystem recommended (to avoid key-permission issues).
+- Linux native filesystem recommended.
 - Go 1.21+ installed.
-- Tendermint Core v0.35.x installed and on PATH.
 
-Run the nsm ABCI app and web UI
+Run the nsm service
 
-1) Start nsm (generates `nsm_key.pem` on first run and starts ABCI on `unix://nsm.sock`):
+1) Start nsm:
 
-   - `go run cmd/nsm/main.go`
+   ```bash
+   go run main.go
+   ```
 
-2) Initialize and start Tendermint in another terminal:
+   On first run, if `hosts.json` doesn't exist, it will be created automatically. The localhost entry is added automatically.
 
-   - `tendermint init --home $HOME/.tendermint`
-   - `tendermint node --home $HOME/.tendermint --proxy_app=unix://nsm.sock`
+2) Open the dashboard at http://localhost:8080 (override with `PORT` env var).
 
-3) Open the dashboard at http://localhost:8080 (override with `PORT` env var).
+3) Add hosts manually using the form at the bottom of the dashboard.
+
+4) Check host health status by clicking "Check All Hosts".
+
+5) When ready, push the host list to all other hosts using the "Push to Other Hosts" button.
 
 Useful env vars
 
-- `KEY_FILE` (default `nsm_key.pem`)
-- `HOST_DATA_FILE` (default `test-hosts.json`)
 - `PORT` (default `8080`)
-- `MDNS_SERVICE_NAME` (default `_nsm._tcp`)
-- `ANTHIAS_POLL_INTERVAL_SECS` (default `30`)
-- `TENDERMINT_RPC` (default `http://localhost:26657`)
 
-## Broadcasting transactions
+## Managing Hosts
 
-Transactions are signed JSON and submitted to Tendermint RPC as base64-encoded bytes.
+### Adding a Host
 
-High-level flow:
+Use the web form at the bottom of the host list to add a new host. Only the IP address is required; the hostname is optional.
 
-- Build a `types.Transaction` (e.g., `TxUpdateStatus`).
-- Sign it with your node identity to get `types.SignedTransaction`.
-- Broadcast via `internal/tendermint.BroadcastClient`.
+### Editing a Host
 
-Example (Go):
+Click the edit icon (✏️) next to any host to edit its IP address or hostname inline. Click save (💾) to commit changes or cancel (❌) to discard.
 
-```go
-id := identity.NewIdentity(privKey)
-bc := tendermint.NewBroadcastClient("http://localhost:26657")
+### Deleting a Host
 
-payload := types.UpdateStatusPayload{Status: "Online", LastSeen: time.Now()}
-payloadBytes, _ := json.Marshal(payload)
+Click the delete icon (🗑️) next to any host to remove it from the list.
 
-tx := &types.Transaction{
-    Type:      types.TxUpdateStatus,
-    Timestamp: time.Now(),
-    Payload:   payloadBytes,
-}
+### Checking Host Health
 
-stx, _ := tx.Sign(id)
-hash, err := bc.BroadcastSignedTransaction(stx)
-if err != nil {
-    log.Fatalf("broadcast failed: %v", err)
-}
-log.Printf("tx hash: %s", hash)
-```
+Click "Check All Hosts" to trigger a health check on all hosts. Status indicators will update automatically:
 
-Notes
+- 🟢 Green: Healthy
+- 🟡 Yellow: Unhealthy
+- 🟠 Orange: Connection Refused
+- 🔴 Red: Unreachable
 
-- Tendermint JSON-RPC expects the `tx` parameter to be base64, even if the payload itself is JSON. The included client handles this automatically.
-- For critical paths, use `BroadcastSignedTransactionCommit` to wait for inclusion in a block.
+### Synchronizing the Network
+
+When you have more than one host in your list, a "Push to Other Hosts" button appears. Click this to send your current host list to all other hosts on the network. They will automatically update their `hosts.json` files.
+
+## API Endpoints
+
+- `GET /api/health` - Health check endpoint
+- `GET /api/hosts` - Get all hosts
+- `POST /api/hosts/add` - Add a new host
+- `POST /api/hosts/update` - Update an existing host
+- `POST /api/hosts/delete?ip=<ip>` - Delete a host
+- `POST /api/hosts/check` - Trigger health check on all hosts
+- `POST /api/hosts/push` - Push host list to all other hosts
+- `POST /api/hosts/receive` - Receive pushed host list (internal)
 
 ## Anthias polling
 
-`nsm` includes a background poller that periodically:
-
-- Commits an `add_host` for this node (once, to register the signer), and
-- Broadcasts `update_status` when the local Anthias status changes.
-
-Knobs
-
-- `ANTHIAS_POLL_INTERVAL_SECS` controls the poll cadence.
-- `TENDERMINT_RPC` points to the Tendermint RPC endpoint (default `http://localhost:26657`).
+`nsm` includes a background poller that periodically updates the localhost entry with current Anthias status information every 30 seconds.
 
 ## ⚖️ Licensing
 
