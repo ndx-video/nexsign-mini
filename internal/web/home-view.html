@@ -1,8 +1,9 @@
 <h2 class="text-xl font-semibold mb-3 text-desert-fg">Signage Host Network</h2>
 
 <div class="host-list" 
+     id="host-list-container"
      hx-get="/views/home" 
-     hx-trigger="every 5s" 
+     hx-trigger="refreshHosts from:body" 
      hx-swap="innerHTML"
      hx-select=".host-list"
      hx-target=".host-list">
@@ -204,7 +205,6 @@ function closeAnthiasDashboard() {
 // Countdown timer for auto-refresh
 let countdownValue = 10;
 let countdownInterval;
-let isEditMode = false;
 
 function isAnyRecordInEditMode() {
     // Check if any row has visible save/cancel buttons
@@ -212,31 +212,51 @@ function isAnyRecordInEditMode() {
     return editButtons.length > 0;
 }
 
+function triggerHostsRefresh() {
+    // Only refresh if not in edit mode
+    if (!isAnyRecordInEditMode()) {
+        // Trigger HTMX refresh
+        htmx.trigger('#host-list-container', 'refreshHosts');
+    }
+}
+
 function startCountdown() {
     const countdownElement = document.getElementById('countdown');
-    const checkButton = document.getElementById('check-hosts-btn');
     
     if (countdownInterval) {
         clearInterval(countdownInterval);
     }
     
     countdownInterval = setInterval(() => {
-        // Check if any record is in edit mode
-        if (isAnyRecordInEditMode()) {
-            // Pause countdown while editing
+        const inEditMode = isAnyRecordInEditMode();
+        
+        if (inEditMode) {
+            // Pause countdown while editing - don't decrement
+            console.log('Countdown paused - edit mode active');
             return;
         }
         
+        // Decrement countdown
         countdownValue--;
+        
+        // Update display
         if (countdownElement) {
             countdownElement.textContent = countdownValue;
         }
         
+        // Check if countdown reached zero
         if (countdownValue <= 0) {
-            // Trigger the health check
-            if (checkButton) {
-                checkButton.click();
-            }
+            console.log('Countdown reached 0 - triggering health check and refresh');
+            
+            // Trigger health check
+            fetch('/api/hosts/check', { method: 'POST' })
+                .then(() => {
+                    // Wait a moment for health check to complete, then refresh
+                    setTimeout(() => {
+                        triggerHostsRefresh();
+                    }, 1000);
+                });
+            
             resetCountdown();
         }
     }, 1000);
@@ -248,24 +268,14 @@ function resetCountdown() {
     if (countdownElement) {
         countdownElement.textContent = countdownValue;
     }
-}
-
-function pauseCountdown() {
-    if (countdownInterval) {
-        clearInterval(countdownInterval);
-        countdownInterval = null;
-    }
-}
-
-function resumeCountdown() {
-    if (!countdownInterval) {
-        startCountdown();
-    }
+    console.log('Countdown reset to 10');
 }
 
 // Inline editing functionality
 function enterEditMode(button) {
     const row = button.closest('tr');
+    
+    console.log('Entering edit mode for', row.dataset.ip);
     
     // Show input fields, hide displays
     row.querySelector('.ip-display').classList.add('hidden');
@@ -277,12 +287,12 @@ function enterEditMode(button) {
     row.querySelector('.edit-btn').classList.add('hidden');
     row.querySelector('.save-btn').classList.remove('hidden');
     row.querySelector('.cancel-btn').classList.remove('hidden');
-    
-    isEditMode = true;
 }
 
 function cancelEdit(button) {
     const row = button.closest('tr');
+    
+    console.log('Canceling edit for', row.dataset.ip);
     
     // Reset input values to original
     const originalIP = row.dataset.ip;
@@ -300,8 +310,6 @@ function cancelEdit(button) {
     row.querySelector('.edit-btn').classList.remove('hidden');
     row.querySelector('.save-btn').classList.add('hidden');
     row.querySelector('.cancel-btn').classList.add('hidden');
-    
-    isEditMode = false;
 }
 
 function saveEdit(button) {
@@ -309,6 +317,8 @@ function saveEdit(button) {
     const oldIP = row.dataset.ip;
     const newIP = row.querySelector('.ip-edit').value;
     const newHostname = row.querySelector('.hostname-edit').value;
+
+    console.log('Saving edit:', oldIP, '->', newIP, newHostname);
 
     fetch('/api/hosts/update', {
         method: 'POST',
@@ -320,6 +330,8 @@ function saveEdit(button) {
         })
     }).then(resp => {
         if (resp.ok) {
+            console.log('Update successful');
+            
             // Update the display values
             row.dataset.ip = newIP;
             row.querySelector('.ip-display').textContent = newIP;
@@ -336,7 +348,10 @@ function saveEdit(button) {
             row.querySelector('.save-btn').classList.add('hidden');
             row.querySelector('.cancel-btn').classList.add('hidden');
             
-            isEditMode = false;
+            // Trigger a refresh to get updated status
+            setTimeout(() => {
+                triggerHostsRefresh();
+            }, 500);
         } else {
             alert('Failed to update host. Please try again.');
         }
