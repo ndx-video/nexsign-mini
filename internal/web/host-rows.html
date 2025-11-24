@@ -8,62 +8,68 @@
                 {{if .Nickname}}{{.Nickname}}{{else}}<span class="text-desert-gray italic">unnamed</span>{{end}}
                 {{if .Hostname}} <span class="text-desert-gray text-xs">({{.Hostname}})</span>{{end}}
                 {{if or (eq .IPAddress $.CurrentHostIP) (and .VPNIPAddress (eq .VPNIPAddress $.CurrentHostIP))}}
-                    <span class="text-desert-cyan text-xs">(current)</span>
+                <span class="text-desert-cyan text-xs">(current)</span>
                 {{end}}
             </div>
-            <input type="text"
-                   class="nickname-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full"
-                   value="{{.Nickname}}"
-                   placeholder="Friendly label">
+            <input type="text" class="nickname-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full"
+                value="{{.Nickname}}" placeholder="Friendly label">
         </td>
         <td class="px-4 py-2 align-top">
-            <div class="ip-lan-display text-desert-tan font-mono">
-                {{.IPAddress}}
+            <div class="text-sm text-desert-fg">{{.IPAddress}}</div>
+            <div class="text-xs mt-1">
+                <a class="text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                    data-on-click="@post('/api/discovery/scan?interface_ip={{.IPAddress}}')">Scan Network</a>
             </div>
+            {{if index $.DuplicateHostnames .Hostname}}
+            <div class="text-xs mt-1">
+                <a class="text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                    data-on-click="@post('/api/hosts/set-primary?id={{.ID}}')">Set Primary</a>
+            </div>
+            {{end}}
             <input type="text"
-                   class="lan-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
-                   value="{{.IPAddress}}"
-                   placeholder="192.168.1.100">
+                class="lan-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
+                value="{{.IPAddress}}" placeholder="192.168.1.100">
         </td>
         <td class="px-4 py-2 align-top">
-            <div class="vpn-ip-display font-mono {{if .VPNIPAddress}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
+            <div
+                class="vpn-ip-display font-mono {{if .VPNIPAddress}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
                 {{if .VPNIPAddress}}{{.VPNIPAddress}}{{else}}—{{end}}
             </div>
             <input type="text"
-                   class="vpn-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
-                   value="{{.VPNIPAddress}}"
-                   placeholder="100.64.x.x">
+                class="vpn-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
+                value="{{.VPNIPAddress}}" placeholder="100.64.x.x">
         </td>
         <td class="px-4 py-2 align-top">
             <div class="flex flex-col gap-1">
                 <div class="inline-flex items-center gap-2">
                     {{if eq .Status "healthy"}}
                     <span class="w-2 h-2 rounded-full bg-green-500" title="NSM Online (LAN)"></span>
-                    <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf "http://%s:8080" .IPAddress}}{{end}}"
-                       target="_blank" rel="noopener noreferrer"
-                       class="text-green-400 hover:text-green-300 underline">
+                    <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf " http://%s:8080"
+                        .IPAddress}}{{end}}" target="_blank" rel="noopener noreferrer"
+                        class="text-green-400 hover:text-green-300 underline">
                         NSM Online (LAN)
                     </a>
                     {{else if eq .Status "stale"}}
                     <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
                     <div class="flex flex-col leading-tight">
-                        <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf "http://%s:8080" .IPAddress}}{{end}}"
-                           target="_blank" rel="noopener noreferrer"
-                           class="text-green-400 hover:text-green-300 underline">
+                        <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf " http://%s:8080"
+                            .IPAddress}}{{end}}" target="_blank" rel="noopener noreferrer"
+                            class="text-green-400 hover:text-green-300 underline">
                             NSM Online (LAN)
                         </a>
-                        <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
+                        <span
+                            class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
                             stale {{if .NSMVersion}}v{{.NSMVersion}}{{else}}unknown{{end}}
                         </span>
                     </div>
                     <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
-                            data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.IPAddress}}'})">
+                        data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.IPAddress}}'})">
                         Upgrade
                     </button>
                     {{else if eq .Status "unhealthy"}}
                     <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
                     <button class="text-yellow-400 hover:text-yellow-300 underline cursor-pointer"
-                            data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.IPAddress}}'})">
+                        data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.IPAddress}}'})">
                         Unhealthy (LAN)
                     </button>
                     {{else if eq .Status "connection_refused"}}
@@ -78,31 +84,32 @@
                 <div class="inline-flex items-center gap-2">
                     {{if eq .StatusVPN "healthy"}}
                     <span class="w-2 h-2 rounded-full bg-green-500" title="NSM Online (VPN)"></span>
-                    <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf "http://%s:8080" .VPNIPAddress}}{{end}}"
-                       target="_blank" rel="noopener noreferrer"
-                       class="text-green-400 hover:text-green-300 underline">
+                    <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf " http://%s:8080"
+                        .VPNIPAddress}}{{end}}" target="_blank" rel="noopener noreferrer"
+                        class="text-green-400 hover:text-green-300 underline">
                         NSM Online (VPN)
                     </a>
                     {{else if eq .StatusVPN "stale"}}
                     <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
                     <div class="flex flex-col leading-tight">
-                        <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf "http://%s:8080" .VPNIPAddress}}{{end}}"
-                           target="_blank" rel="noopener noreferrer"
-                           class="text-green-400 hover:text-green-300 underline">
+                        <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf " http://%s:8080"
+                            .VPNIPAddress}}{{end}}" target="_blank" rel="noopener noreferrer"
+                            class="text-green-400 hover:text-green-300 underline">
                             NSM Online (VPN)
                         </a>
-                        <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
+                        <span
+                            class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
                             stale {{if .NSMVersionVPN}}v{{.NSMVersionVPN}}{{else}}unknown{{end}}
                         </span>
                     </div>
                     <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
-                            data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.VPNIPAddress}}'})">
+                        data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.VPNIPAddress}}'})">
                         Upgrade
                     </button>
                     {{else if eq .StatusVPN "unhealthy"}}
                     <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
                     <button class="text-yellow-400 hover:text-yellow-300 underline cursor-pointer"
-                            data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.VPNIPAddress}}'})">
+                        data-on-click="@post('/api/hosts/upgrade', {target_ip: '{{.VPNIPAddress}}'})">
                         Unhealthy (VPN)
                     </button>
                     {{else if eq .StatusVPN "connection_refused"}}
@@ -123,12 +130,12 @@
                 <div>
                     {{if eq .CMSStatus "CMS Online"}}
                     <a href="http://{{.IPAddress}}" target="_blank" rel="noopener noreferrer"
-                       class="text-green-400 hover:text-green-300 cursor-pointer underline">
+                        class="text-green-400 hover:text-green-300 cursor-pointer underline">
                         CMS Online (LAN){{if gt .AssetCount 0}} ({{.AssetCount}}){{end}}
                     </a>
                     {{else if eq .CMSStatus "CMS Offline"}}
                     <button class="text-red-400 hover:text-red-300 cursor-pointer underline"
-                            data-on-click="@post('/api/hosts/reboot', {target_ip: '{{.IPAddress}}'})">
+                        data-on-click="@post('/api/hosts/reboot', {target_ip: '{{.IPAddress}}'})">
                         CMS Offline (LAN)
                     </button>
                     {{else}}
@@ -139,12 +146,12 @@
                 <div>
                     {{if eq .CMSStatusVPN "CMS Online"}}
                     <a href="http://{{.VPNIPAddress}}" target="_blank" rel="noopener noreferrer"
-                       class="text-green-400 hover:text-green-300 cursor-pointer underline">
+                        class="text-green-400 hover:text-green-300 cursor-pointer underline">
                         CMS Online (VPN){{if gt .AssetCountVPN 0}} ({{.AssetCountVPN}}){{end}}
                     </a>
                     {{else if eq .CMSStatusVPN "CMS Offline"}}
                     <button class="text-red-400 hover:text-red-300 cursor-pointer underline"
-                            data-on-click="@post('/api/hosts/reboot', {target_ip: '{{.VPNIPAddress}}'})">
+                        data-on-click="@post('/api/hosts/reboot', {target_ip: '{{.VPNIPAddress}}'})">
                         CMS Offline (VPN)
                     </button>
                     {{else}}
@@ -155,22 +162,26 @@
             </div>
         </td>
         <td class="px-4 py-2 align-top">
-            <div class="notes-display whitespace-pre-wrap {{if .Notes}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
+            <div
+                class="notes-display whitespace-pre-wrap {{if .Notes}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
                 {{if .Notes}}{{.Notes}}{{else}}—{{end}}
             </div>
-            <textarea class="notes-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full" rows="2" placeholder="Optional notes">{{.Notes}}</textarea>
+            <textarea class="notes-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full" rows="2"
+                placeholder="Optional notes">{{.Notes}}</textarea>
         </td>
         <td class="px-4 py-2 align-top text-right">
             <div class="flex justify-end items-center gap-3">
                 {{if eq .CMSStatus "CMS Online"}}
-                <button class="info-btn text-blue-400 hover:text-blue-300 text-lg" title="Info" onclick="toggleInfo(this, '{{.IPAddress}}')">ℹ️</button>
+                <button class="info-btn text-blue-400 hover:text-blue-300 text-lg" title="Info"
+                    onclick="toggleInfo(this, '{{.IPAddress}}')">ℹ️</button>
                 {{end}}
-                <button class="edit-btn text-desert-cyan hover:text-desert-yellow text-lg" title="Edit" onclick="enterEditMode(this)">✏️</button>
-                <button class="save-btn hidden text-green-400 hover:text-green-300 text-lg font-bold" title="Save" onclick="saveEdit(this)">✓</button>
-                <button class="cancel-btn hidden text-red-400 hover:text-red-300 text-lg font-bold" title="Cancel" onclick="cancelEdit(this)">✗</button>
-                <button
-                    class="text-red-400 hover:text-red-300"
-                    title="Delete"
+                <button class="edit-btn text-desert-cyan hover:text-desert-yellow text-lg" title="Edit"
+                    onclick="enterEditMode(this)">✏️</button>
+                <button class="save-btn hidden text-green-400 hover:text-green-300 text-lg font-bold" title="Save"
+                    onclick="saveEdit(this)">✓</button>
+                <button class="cancel-btn hidden text-red-400 hover:text-red-300 text-lg font-bold" title="Cancel"
+                    onclick="cancelEdit(this)">✗</button>
+                <button class="text-red-400 hover:text-red-300" title="Delete"
                     data-on-click="@delete('/api/hosts/delete?ip={{.IPAddress}}')">🗑️</button>
             </div>
         </td>

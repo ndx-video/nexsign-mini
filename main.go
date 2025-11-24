@@ -84,66 +84,48 @@ func updateLocalHost(store *hosts.Store, client *anthias.Client) {
 		return
 	}
 
-	// Check if localhost exists in store
-	allHosts := store.GetAll()
-	localhostExists := false
+	// We are running, so we are online
+	metadata.Status = types.StatusHealthy
+	metadata.NSMStatus = "NSM Online"
+	metadata.NSMVersion = types.Version
+	metadata.LastChecked = time.Now()
 
-	for _, h := range allHosts {
-		if h.IPAddress == "127.0.0.1" || h.IPAddress == metadata.IPAddress {
-			localhostExists = true
-			break
+	// Check if we already have an entry for this ID
+	existing, err := store.GetByID(metadata.ID)
+	if err == nil {
+		// Update existing entry
+		// Preserve user-editable fields
+		if existing.Nickname != "" {
+			metadata.Nickname = existing.Nickname
 		}
-	}
+		if existing.Notes != "" {
+			metadata.Notes = existing.Notes
+		}
+		
+		// Respect existing IP if different (user manual override)
+		if existing.IPAddress != metadata.IPAddress {
+			metadata.IPAddress = existing.IPAddress
+			metadata.DashboardURL = existing.DashboardURL
+		}
 
-	if !localhostExists {
-		// Add localhost entry
-		localhost := types.Host{
-			Nickname:       metadata.Nickname,
-			IPAddress:      metadata.IPAddress,
-			VPNIPAddress:   metadata.VPNIPAddress,
-			Hostname:       metadata.Hostname,
-			Notes:          "",
-			Status:         types.StatusUnreachable,
-			NSMStatus:      "NSM Offline",
-			NSMVersion:     "unknown",
-			CMSStatus:      types.CMSUnknown,
-			AnthiasVersion: metadata.AnthiasVersion,
-			AnthiasStatus:  metadata.AnthiasStatus,
-			DashboardURL:   metadata.DashboardURL,
+		if err := store.Upsert(*metadata); err != nil {
+			log.Printf("Warning: failed to update localhost: %v", err)
 		}
-		if metadata.VPNIPAddress != "" {
-			localhost.StatusVPN = types.StatusUnreachable
-			localhost.NSMStatusVPN = "NSM Offline"
-			localhost.NSMVersionVPN = "unknown"
-			localhost.CMSStatusVPN = types.CMSUnknown
-			localhost.DashboardURLVPN = fmt.Sprintf("http://%s:8080", metadata.VPNIPAddress)
+	} else {
+		// New ID. Check for hostname conflict.
+		allHosts := store.GetAll()
+		for _, h := range allHosts {
+			if h.Hostname == metadata.Hostname && h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
+				log.Printf("Localhost %s (ID: %s) matches existing host %s (ID: %s). Skipping self-registration.", metadata.Hostname, metadata.ID, h.Hostname, h.ID)
+				return
+			}
 		}
-		if err := store.Add(localhost); err != nil {
+
+		// No conflict, add new
+		if err := store.Upsert(*metadata); err != nil {
 			log.Printf("Warning: failed to add localhost: %v", err)
 		} else {
 			log.Println("Added localhost to host list")
-		}
-	} else {
-		// Update existing localhost entry
-		err := store.Update(metadata.IPAddress, func(h *types.Host) {
-			if metadata.Hostname != "" {
-				h.Hostname = metadata.Hostname
-			}
-			if h.Nickname == "" && metadata.Nickname != "" {
-				h.Nickname = metadata.Nickname
-			}
-			h.AnthiasVersion = metadata.AnthiasVersion
-			h.AnthiasStatus = metadata.AnthiasStatus
-			h.DashboardURL = metadata.DashboardURL
-			if metadata.VPNIPAddress != "" {
-				h.VPNIPAddress = metadata.VPNIPAddress
-				if h.DashboardURLVPN == "" {
-					h.DashboardURLVPN = fmt.Sprintf("http://%s:8080", metadata.VPNIPAddress)
-				}
-			}
-		})
-		if err != nil {
-			log.Printf("Warning: failed to update localhost: %v", err)
 		}
 	}
 }

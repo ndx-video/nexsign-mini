@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"nexsign.mini/nsm/internal/types"
 
 	_ "modernc.org/sqlite"
@@ -277,33 +279,147 @@ func copyFile(src, dst string) error {
 }
 
 func (s *Store) ensureSchema() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS hosts (
-		ip_address TEXT PRIMARY KEY,
-		nickname TEXT,
-		vpn_ip_address TEXT,
-		hostname TEXT,
-		notes TEXT,
-		status TEXT,
-		status_vpn TEXT,
-		nsm_status TEXT,
-		nsm_status_vpn TEXT,
-		nsm_version TEXT,
-		nsm_version_vpn TEXT,
-		anthias_version TEXT,
-		anthias_version_vpn TEXT,
-		anthias_status TEXT,
-		anthias_status_vpn TEXT,
-		cms_status TEXT,
-		cms_status_vpn TEXT,
-		asset_count INTEGER,
-		asset_count_vpn INTEGER,
-		dashboard_url TEXT,
-		dashboard_url_vpn TEXT,
-		last_checked TEXT,
-		last_checked_vpn TEXT
-	)`)
+	// Check if 'hosts' table exists
+	var tableExists int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hosts'").Scan(&tableExists); err != nil {
+		return fmt.Errorf("check table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Create new table
+		_, err := s.db.Exec(`CREATE TABLE hosts (
+			id TEXT PRIMARY KEY,
+			ip_address TEXT NOT NULL,
+			nickname TEXT,
+			vpn_ip_address TEXT,
+			hostname TEXT,
+			notes TEXT,
+			status TEXT,
+			status_vpn TEXT,
+			nsm_status TEXT,
+			nsm_status_vpn TEXT,
+			nsm_version TEXT,
+			nsm_version_vpn TEXT,
+			anthias_version TEXT,
+			anthias_version_vpn TEXT,
+			anthias_status TEXT,
+			anthias_status_vpn TEXT,
+			cms_status TEXT,
+			cms_status_vpn TEXT,
+			asset_count INTEGER,
+			asset_count_vpn INTEGER,
+			dashboard_url TEXT,
+			dashboard_url_vpn TEXT,
+			last_checked DATETIME,
+			last_checked_vpn DATETIME
+		)`)
+		if err != nil {
+			return fmt.Errorf("create table: %w", err)
+		}
+		// Ensure WAL mode is enabled for the newly created table
+		var mode string
+		if err := s.db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
+			return fmt.Errorf("enable WAL: %w", err)
+		}
+		return nil
+	}
+
+	// Check if 'id' column exists
+	var idExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name='id'").Scan(&idExists)
 	if err != nil {
-		return fmt.Errorf("create hosts table: %w", err)
+		return fmt.Errorf("check id column: %w", err)
+	}
+
+	if idExists == 0 {
+		// Migration needed: Recreate table with ID primary key
+		log.Println("Migrating database to include ID column...")
+		
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration: %w", err)
+		}
+		defer tx.Rollback()
+
+		// Rename old table
+		if _, err := tx.Exec("ALTER TABLE hosts RENAME TO hosts_old"); err != nil {
+			return fmt.Errorf("rename old table: %w", err)
+		}
+
+		// Create new table
+		// Create new table
+		if _, err := tx.Exec(`CREATE TABLE hosts (
+			id TEXT PRIMARY KEY,
+			ip_address TEXT NOT NULL,
+			nickname TEXT,
+			vpn_ip_address TEXT,
+			hostname TEXT,
+			notes TEXT,
+			status TEXT,
+			status_vpn TEXT,
+			nsm_status TEXT,
+			nsm_status_vpn TEXT,
+			nsm_version TEXT,
+			nsm_version_vpn TEXT,
+			anthias_version TEXT,
+			anthias_version_vpn TEXT,
+			anthias_status TEXT,
+			anthias_status_vpn TEXT,
+			cms_status TEXT,
+			cms_status_vpn TEXT,
+			asset_count INTEGER,
+			asset_count_vpn INTEGER,
+			dashboard_url TEXT,
+			dashboard_url_vpn TEXT,
+			last_checked DATETIME,
+			last_checked_vpn DATETIME
+		)`); err != nil {
+			return fmt.Errorf("create new table: %w", err)
+		}
+
+		// Copy data
+		rows, err := tx.Query("SELECT ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn, nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version, anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status, cms_status_vpn, asset_count, asset_count_vpn, dashboard_url, dashboard_url_vpn, last_checked, last_checked_vpn FROM hosts_old")
+		if err != nil {
+			return fmt.Errorf("select old data: %w", err)
+		}
+		defer rows.Close()
+
+		stmt, err := tx.Prepare(`INSERT INTO hosts (
+			id, ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
+			nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version,
+			anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status,
+			cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
+			dashboard_url_vpn, last_checked, last_checked_vpn)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare insert: %w", err)
+		}
+		defer stmt.Close()
+
+		for rows.Next() {
+			var h types.Host
+			var lastChecked, lastCheckedVPN sql.NullTime
+			if err := rows.Scan(&h.IPAddress, &h.Nickname, &h.VPNIPAddress, &h.Hostname, &h.Notes, &h.Status, &h.StatusVPN, &h.NSMStatus, &h.NSMStatusVPN, &h.NSMVersion, &h.NSMVersionVPN, &h.AnthiasVersion, &h.AnthiasVersionVPN, &h.AnthiasStatus, &h.AnthiasStatusVPN, &h.CMSStatus, &h.CMSStatusVPN, &h.AssetCount, &h.AssetCountVPN, &h.DashboardURL, &h.DashboardURLVPN, &lastChecked, &lastCheckedVPN); err != nil {
+				return fmt.Errorf("scan old row: %w", err)
+			}
+
+			// Generate new ID
+			h.ID = uuid.New().String()
+			
+			if _, err := stmt.Exec(hostToArgs(h)...); err != nil {
+				return fmt.Errorf("insert migrated row: %w", err)
+			}
+		}
+
+		// Drop old table
+		if _, err := tx.Exec("DROP TABLE hosts_old"); err != nil {
+			return fmt.Errorf("drop old table: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration: %w", err)
+		}
+		log.Println("Database migration complete.")
 	}
 
 	var mode string
@@ -355,7 +471,7 @@ func (s *Store) migrateLegacyJSON() error {
 // GetAll returns all hosts ordered by IP address.
 func (s *Store) GetAll() []types.Host {
 	s.mu.RLock()
-	rows, err := s.db.Query(`SELECT ip_address, nickname, vpn_ip_address, hostname, notes,
+	rows, err := s.db.Query(`SELECT id, ip_address, nickname, vpn_ip_address, hostname, notes,
 		status, status_vpn, nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn,
 		anthias_version, anthias_version_vpn, anthias_status, anthias_status_vpn,
 		cms_status, cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
@@ -383,13 +499,17 @@ func (s *Store) Add(host types.Host) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if host.ID == "" {
+		host.ID = uuid.New().String()
+	}
+
 	_, err := s.db.Exec(`INSERT INTO hosts (
-		ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
+		id, ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
 		nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version,
 		anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status,
 		cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
 		dashboard_url_vpn, last_checked, last_checked_vpn)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, hostToArgs(host)...)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, hostToArgs(host)...)
 	if err != nil {
 		return fmt.Errorf("insert host: %w", err)
 	}
@@ -410,42 +530,38 @@ func (s *Store) Update(ip string, updater func(*types.Host)) error {
 	originalIP := host.IPAddress
 	updater(&host)
 
-	if host.IPAddress != originalIP {
-		if _, err := s.db.Exec(`DELETE FROM hosts WHERE ip_address = ?`, originalIP); err != nil {
-			return fmt.Errorf("delete original host: %w", err)
-		}
+	// If ID is missing (shouldn't happen for existing), generate it
+	if host.ID == "" {
+		host.ID = uuid.New().String()
 	}
 
-	_, err = s.db.Exec(`INSERT INTO hosts (
-		ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
-		nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version,
-		anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status,
-		cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
-		dashboard_url_vpn, last_checked, last_checked_vpn)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(ip_address) DO UPDATE SET
-			nickname = excluded.nickname,
-			vpn_ip_address = excluded.vpn_ip_address,
-			hostname = excluded.hostname,
-			notes = excluded.notes,
-			status = excluded.status,
-			status_vpn = excluded.status_vpn,
-			nsm_status = excluded.nsm_status,
-			nsm_status_vpn = excluded.nsm_status_vpn,
-			nsm_version = excluded.nsm_version,
-			nsm_version_vpn = excluded.nsm_version_vpn,
-			anthias_version = excluded.anthias_version,
-			anthias_version_vpn = excluded.anthias_version_vpn,
-			anthias_status = excluded.anthias_status,
-			anthias_status_vpn = excluded.anthias_status_vpn,
-			cms_status = excluded.cms_status,
-			cms_status_vpn = excluded.cms_status_vpn,
-			asset_count = excluded.asset_count,
-			asset_count_vpn = excluded.asset_count_vpn,
-			dashboard_url = excluded.dashboard_url,
-			dashboard_url_vpn = excluded.dashboard_url_vpn,
-			last_checked = excluded.last_checked,
-			last_checked_vpn = excluded.last_checked_vpn`, hostToArgs(host)...)
+	if host.IPAddress != originalIP {
+		// Since ID is primary key now, we don't strictly need to delete and re-insert if we update by ID.
+		// But to keep logic simple and consistent with previous behavior (where IP was key),
+		// we can just update the record where ID matches.
+		// However, getHostLocked gets by IP.
+		// Let's update using ID if available, or fallback to IP.
+		// Actually, since we are updating the record found by IP, we have its ID.
+	}
+
+	_, err = s.db.Exec(`UPDATE hosts SET
+		ip_address = ?, nickname = ?, vpn_ip_address = ?, hostname = ?, notes = ?,
+		status = ?, status_vpn = ?, nsm_status = ?, nsm_status_vpn = ?,
+		nsm_version = ?, nsm_version_vpn = ?, anthias_version = ?,
+		anthias_version_vpn = ?, anthias_status = ?, anthias_status_vpn = ?,
+		cms_status = ?, cms_status_vpn = ?, asset_count = ?, asset_count_vpn = ?,
+		dashboard_url = ?, dashboard_url_vpn = ?, last_checked = ?,
+		last_checked_vpn = ?
+		WHERE id = ?`,
+		host.IPAddress, host.Nickname, host.VPNIPAddress, host.Hostname, host.Notes,
+		string(host.Status), string(host.StatusVPN), host.NSMStatus, host.NSMStatusVPN,
+		host.NSMVersion, host.NSMVersionVPN, host.AnthiasVersion,
+		host.AnthiasVersionVPN, host.AnthiasStatus, host.AnthiasStatusVPN,
+		string(host.CMSStatus), string(host.CMSStatusVPN), host.AssetCount,
+		host.AssetCountVPN, host.DashboardURL, host.DashboardURLVPN,
+		formatTime(host.LastChecked), formatTime(host.LastCheckedVPN),
+		host.ID)
+
 	if err != nil {
 		return fmt.Errorf("update host: %w", err)
 	}
@@ -488,12 +604,12 @@ func (s *Store) ReplaceAll(hosts []types.Host) error {
 	}
 
 	stmt, err := tx.Prepare(`INSERT INTO hosts (
-		ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
+		id, ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
 		nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version,
 		anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status,
 		cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
 		dashboard_url_vpn, last_checked, last_checked_vpn)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("prepare replace insert: %w", err)
@@ -501,6 +617,9 @@ func (s *Store) ReplaceAll(hosts []types.Host) error {
 	defer stmt.Close()
 
 	for _, host := range hosts {
+		if host.ID == "" {
+			host.ID = uuid.New().String()
+		}
 		if _, err := stmt.Exec(hostToArgs(host)...); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("insert host during replace: %w", err)
@@ -513,6 +632,82 @@ func (s *Store) ReplaceAll(hosts []types.Host) error {
 
 	s.notify()
 	return nil
+}
+
+// Upsert inserts or updates a host based on its ID.
+func (s *Store) Upsert(host types.Host) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if host.ID == "" {
+		host.ID = uuid.New().String()
+	}
+
+	// Check if host exists by ID
+	var exists bool
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = ?)", host.ID).Scan(&exists); err != nil {
+		return fmt.Errorf("check existence: %w", err)
+	}
+
+	if exists {
+		// Update existing
+		_, err := s.db.Exec(`UPDATE hosts SET
+			ip_address = ?, nickname = ?, vpn_ip_address = ?, hostname = ?, notes = ?,
+			status = ?, status_vpn = ?, nsm_status = ?, nsm_status_vpn = ?,
+			nsm_version = ?, nsm_version_vpn = ?, anthias_version = ?,
+			anthias_version_vpn = ?, anthias_status = ?, anthias_status_vpn = ?,
+			cms_status = ?, cms_status_vpn = ?, asset_count = ?, asset_count_vpn = ?,
+			dashboard_url = ?, dashboard_url_vpn = ?, last_checked = ?,
+			last_checked_vpn = ?
+			WHERE id = ?`,
+			host.IPAddress, host.Nickname, host.VPNIPAddress, host.Hostname, host.Notes,
+			string(host.Status), string(host.StatusVPN), host.NSMStatus, host.NSMStatusVPN,
+			host.NSMVersion, host.NSMVersionVPN, host.AnthiasVersion,
+			host.AnthiasVersionVPN, host.AnthiasStatus, host.AnthiasStatusVPN,
+			string(host.CMSStatus), string(host.CMSStatusVPN), host.AssetCount,
+			host.AssetCountVPN, host.DashboardURL, host.DashboardURLVPN,
+			formatTime(host.LastChecked), formatTime(host.LastCheckedVPN),
+			host.ID)
+		if err != nil {
+			return fmt.Errorf("update host: %w", err)
+		}
+	} else {
+		// Insert new
+		_, err := s.db.Exec(`INSERT INTO hosts (
+			id, ip_address, nickname, vpn_ip_address, hostname, notes, status, status_vpn,
+			nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn, anthias_version,
+			anthias_version_vpn, anthias_status, anthias_status_vpn, cms_status,
+			cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
+			dashboard_url_vpn, last_checked, last_checked_vpn)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, hostToArgs(host)...)
+		if err != nil {
+			return fmt.Errorf("insert host: %w", err)
+		}
+	}
+
+	s.notify()
+	return nil
+}
+
+// GetByID returns a specific host by ID.
+func (s *Store) GetByID(id string) (*types.Host, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(`SELECT id, ip_address, nickname, vpn_ip_address, hostname, notes,
+		status, status_vpn, nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn,
+		anthias_version, anthias_version_vpn, anthias_status, anthias_status_vpn,
+		cms_status, cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
+		dashboard_url_vpn, last_checked, last_checked_vpn FROM hosts WHERE id = ?`, id)
+
+	host, err := scanHost(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("host not found: %s", id)
+		}
+		return nil, err
+	}
+	return &host, nil
 }
 
 // BackupCurrent writes a snapshot of the database to a timestamped file and
@@ -687,7 +882,7 @@ func (s *Store) GetByIP(ip string) (*types.Host, error) {
 }
 
 func (s *Store) getHostLocked(ip string) (types.Host, error) {
-	row := s.db.QueryRow(`SELECT ip_address, nickname, vpn_ip_address, hostname, notes,
+	row := s.db.QueryRow(`SELECT id, ip_address, nickname, vpn_ip_address, hostname, notes,
 		status, status_vpn, nsm_status, nsm_status_vpn, nsm_version, nsm_version_vpn,
 		anthias_version, anthias_version_vpn, anthias_status, anthias_status_vpn,
 		cms_status, cms_status_vpn, asset_count, asset_count_vpn, dashboard_url,
@@ -705,6 +900,7 @@ func (s *Store) getHostLocked(ip string) (types.Host, error) {
 
 func hostToArgs(host types.Host) []any {
 	return []any{
+		host.ID,
 		host.IPAddress,
 		host.Nickname,
 		host.VPNIPAddress,
@@ -733,6 +929,7 @@ func hostToArgs(host types.Host) []any {
 
 func scanHost(scanner interface{ Scan(dest ...any) error }) (types.Host, error) {
 	var (
+		id                                   sql.NullString
 		ip, nickname, vpnIP, hostname, notes sql.NullString
 		status, statusVPN                    sql.NullString
 		nsmStatus, nsmStatusVPN              sql.NullString
@@ -746,6 +943,7 @@ func scanHost(scanner interface{ Scan(dest ...any) error }) (types.Host, error) 
 	)
 
 	if err := scanner.Scan(
+		&id,
 		&ip, &nickname, &vpnIP, &hostname, &notes,
 		&status, &statusVPN, &nsmStatus, &nsmStatusVPN,
 		&nsmVersion, &nsmVersionVPN, &anthiasVersion, &anthiasVersionVPN,
@@ -757,6 +955,7 @@ func scanHost(scanner interface{ Scan(dest ...any) error }) (types.Host, error) 
 	}
 
 	host := types.Host{
+		ID:                id.String,
 		IPAddress:         ip.String,
 		Nickname:          nickname.String,
 		VPNIPAddress:      vpnIP.String,

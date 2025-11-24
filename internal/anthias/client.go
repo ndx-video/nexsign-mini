@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/google/uuid"
 	"nexsign.mini/nsm/internal/types"
 )
 
@@ -18,13 +19,30 @@ import (
 type Client struct {
 	// anthiasURL is the local Anthias HTTP API endpoint
 	anthiasURL string
+	// id is the unique identifier for this node
+	id string
 }
 
 // NewClient creates a new Anthias client.
 func NewClient() *Client {
+	// Load or generate persistent ID
+	idFile := "identity.id"
+	var id string
+	if data, err := os.ReadFile(idFile); err == nil {
+		id = strings.TrimSpace(string(data))
+	}
+
+	if id == "" {
+		id = uuid.New().String()
+		if err := os.WriteFile(idFile, []byte(id), 0o644); err != nil {
+			fmt.Printf("Warning: failed to save identity file: %v\n", err)
+		}
+	}
+
 	// TODO: Allow configuration of Anthias URL via env var or config
 	return &Client{
 		anthiasURL: "http://localhost:8080", // Default Anthias port
+		id:         id,
 	}
 }
 
@@ -32,6 +50,7 @@ func NewClient() *Client {
 // This includes hostname, IP address, Anthias version/status, etc.
 func (c *Client) GetMetadata() (*types.Host, error) {
 	host := &types.Host{}
+	host.ID = c.id
 
 	// Get hostname
 	hostname, err := os.Hostname()
@@ -64,6 +83,10 @@ func (c *Client) GetMetadata() (*types.Host, error) {
 
 // getPrimaryIP returns the first non-loopback IPv4 address
 func getPrimaryIP() string {
+	if ip := os.Getenv("NSM_HOST_IP"); ip != "" {
+		return ip
+	}
+
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "127.0.0.1"
@@ -72,6 +95,10 @@ func getPrimaryIP() string {
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
+				// Ignore WSL/Hyper-V virtual switch IP
+				if ipnet.IP.String() == "10.255.255.254" {
+					continue
+				}
 				return ipnet.IP.String()
 			}
 		}

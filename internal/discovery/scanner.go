@@ -17,19 +17,51 @@ type DiscoveredHost struct {
 
 // Scanner scans the local subnet for NSM instances
 type Scanner struct {
-	port int
+	port       int
+	overrideIP string
 }
 
 // NewScanner creates a new scanner for the specified port
-func NewScanner(port int) *Scanner {
+func NewScanner(port int, overrideIP string) *Scanner {
 	return &Scanner{
-		port: port,
+		port:       port,
+		overrideIP: overrideIP,
 	}
 }
 
 // Scan identifies the local subnet and scans for open ports
 func (s *Scanner) Scan(ctx context.Context) (<-chan DiscoveredHost, error) {
 	results := make(chan DiscoveredHost)
+
+	if s.overrideIP != "" {
+		go func() {
+			defer close(results)
+			ip := net.ParseIP(s.overrideIP)
+			if ip == nil {
+				log.Printf("Invalid override IP: %s", s.overrideIP)
+				return
+			}
+			// Create /24 subnet around the override IP
+			// We assume /24 is the most common case for this manual override
+			ipv4 := ip.To4()
+			if ipv4 == nil {
+				log.Printf("Override IP must be IPv4: %s", s.overrideIP)
+				return
+			}
+			
+			mask := net.CIDRMask(24, 32)
+			// Apply mask to get network address
+			networkIP := make(net.IP, 4)
+			for i := 0; i < 4; i++ {
+				networkIP[i] = ipv4[i] & mask[i]
+			}
+			
+			ipNet := &net.IPNet{IP: networkIP, Mask: mask}
+			log.Printf("Scanning override subnet %s", ipNet.String())
+			s.scanSubnet(ctx, ipNet, results)
+		}()
+		return results, nil
+	}
 
 	ifaces, err := net.Interfaces()
 	if err != nil {

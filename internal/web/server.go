@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -29,6 +30,9 @@ type TemplateData struct {
 	SelectedHost   *types.Host
 	CurrentHostIP  string
 	CurrentVersion string
+	Interfaces     []string
+	EnvVarSet          bool
+	DuplicateHostnames map[string]bool
 }
 
 // Server is the web server for the dashboard and API.
@@ -66,14 +70,17 @@ func (s *Server) Start() <-chan error {
 	// Page routes
 	mux.HandleFunc("/", s.handlePageLoad)
 	mux.HandleFunc("/views/home", s.handleHomeView)
+	mux.HandleFunc("/views/advanced", s.handleAdvancedView)
 
 	// API routes
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/host/local", s.handleGetLocalHost)
 	mux.HandleFunc("/api/hosts", s.handleGetHosts)
 	mux.HandleFunc("/api/hosts/add", s.handleAddHost)
 	mux.HandleFunc("/api/hosts/update", s.handleUpdateHost)
 	mux.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
+	mux.HandleFunc("/api/hosts/set-primary", s.handleSetPrimaryHost)
 	mux.HandleFunc("/api/hosts/check", s.handleCheckHosts)
 	mux.HandleFunc("/api/hosts/stream", s.handleHostsStream)
 	mux.HandleFunc("/api/hosts/push", s.handlePushHosts)
@@ -107,25 +114,106 @@ func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
-	// Get current host IP
+	// Get current host IP based on persistent ID
 	currentIP := ""
 	if localHost, err := s.anthias.GetMetadata(); err == nil {
-		currentIP = localHost.IPAddress
+		// Try to find this host in the store to get its user-preferred IP
+		if storedHost, err := s.store.GetByID(localHost.ID); err == nil {
+			currentIP = storedHost.IPAddress
+		} else {
+			// Fallback to detected IP
+			currentIP = localHost.IPAddress
+		}
+	}
+
+	// Get available interfaces
+	var interfaces []string
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, i := range ifaces {
+			if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, _ := i.Addrs()
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && ip.To4() != nil {
+					interfaces = append(interfaces, ip.String())
+				}
+			}
+		}
+	}
+
+	// Identify duplicate hostnames
+	allHosts := s.store.GetAll()
+	hostnameCounts := make(map[string]int)
+	for _, h := range allHosts {
+		if h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
+			hostnameCounts[h.Hostname]++
+		}
+	}
+	duplicateHostnames := make(map[string]bool)
+	for name, count := range hostnameCounts {
+		if count > 1 {
+			duplicateHostnames[name] = true
+		}
 	}
 
 	data := TemplateData{
-		Hosts:          s.store.GetAll(),
-		CurrentHostIP:  currentIP,
-		CurrentVersion: types.Version,
+		Hosts:              allHosts,
+		CurrentHostIP:      currentIP,
+		CurrentVersion:     types.Version,
+		Interfaces:         interfaces,
+		EnvVarSet:          os.Getenv("NSM_HOST_IP") != "",
+		DuplicateHostnames: duplicateHostnames,
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	s.setCacheHeaders(w)
 
-	err := s.templates.ExecuteTemplate(w, "home-view.html", data)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "home-view.html", data); err != nil {
 		log.Printf("Error executing home-view template: %s", err)
 		http.Error(w, "Failed to render view", http.StatusInternalServerError)
+		return
 	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	s.setCacheHeaders(w)
+
+	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
+	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
+	
+	lines := strings.Split(buf.String(), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fmt.Fprintf(w, "data: fragments %s\n", line)
+	}
+	fmt.Fprintf(w, "data: fragments </div>\n\n")
+}
+
+func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	
+	html := `<div id="content-area" class="p-4 text-desert-tan">
+		<h2 class="text-xl font-semibold mb-3">Advanced Settings</h2>
+		<p class="text-desert-gray">Not implemented yet.</p>
+	</div>`
+
+	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
+	lines := strings.Split(html, "\n")
+	for _, line := range lines {
+		fmt.Fprintf(w, "data: fragments %s\n", line)
+	}
+	fmt.Fprintf(w, "\n")
 }
 
 // Health check endpoint
@@ -134,13 +222,41 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleVersion returns the current NSM version
+// handleVersion returns the current NSM version and Host ID
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	
+	// Get local ID
+	var id string
+	if meta, err := s.anthias.GetMetadata(); err == nil {
+		id = meta.ID
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{
 		"version": types.Version,
 		"status":  "ok",
+		"id":      id,
 	})
+}
+
+// handleGetLocalHost returns the metadata of this specific host
+func (s *Server) handleGetLocalHost(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	meta, err := s.anthias.GetMetadata()
+	if err != nil {
+		http.Error(w, "Failed to get local metadata", http.StatusInternalServerError)
+		return
+	}
+
+	// Try to get stored version to include any user customizations (Nickname, etc)
+	if stored, err := s.store.GetByID(meta.ID); err == nil {
+		json.NewEncoder(w).Encode(stored)
+		return
+	}
+
+	// Fallback to raw metadata
+	json.NewEncoder(w).Encode(meta)
 }
 
 func (s *Server) handleGetHosts(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +473,50 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// handleSetPrimaryHost sets the selected host as primary and removes duplicates
+func (s *Server) handleSetPrimaryHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "ID parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the target host
+	target, err := s.store.GetByID(id)
+	if err != nil {
+		http.Error(w, "Host not found", http.StatusNotFound)
+		return
+	}
+
+	if target.Hostname == "" || target.Hostname == "localhost" || target.Hostname == "unknown" {
+		http.Error(w, "Cannot set primary for host with invalid hostname", http.StatusBadRequest)
+		return
+	}
+
+	// Find all hosts with same hostname
+	allHosts := s.store.GetAll()
+	deletedCount := 0
+	for _, h := range allHosts {
+		if h.Hostname == target.Hostname && h.ID != target.ID {
+			if err := s.store.Delete(h.IPAddress); err != nil {
+				log.Printf("Failed to delete duplicate host %s: %v", h.IPAddress, err)
+			} else {
+				deletedCount++
+			}
+		}
+	}
+
+	log.Printf("Set %s (%s) as primary for hostname %s. Deleted %d duplicates.", target.IPAddress, target.ID, target.Hostname, deletedCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // handleCheckHosts triggers health check on all hosts
 func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
 	// Datastar action can be a GET or POST.
@@ -380,16 +540,38 @@ func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 
 	// Helper to render and send the host list
 	sendUpdate := func() error {
-		// Get current host IP
+		// Get current host IP based on persistent ID
 		currentIP := ""
 		if localHost, err := s.anthias.GetMetadata(); err == nil {
-			currentIP = localHost.IPAddress
+			// Try to find this host in the store to get its user-preferred IP
+			if storedHost, err := s.store.GetByID(localHost.ID); err == nil {
+				currentIP = storedHost.IPAddress
+			} else {
+				// Fallback to detected IP
+				currentIP = localHost.IPAddress
+			}
+		}
+
+		// Identify duplicate hostnames
+		allHosts := s.store.GetAll()
+		hostnameCounts := make(map[string]int)
+		for _, h := range allHosts {
+			if h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
+				hostnameCounts[h.Hostname]++
+			}
+		}
+		duplicateHostnames := make(map[string]bool)
+		for name, count := range hostnameCounts {
+			if count > 1 {
+				duplicateHostnames[name] = true
+			}
 		}
 
 		data := TemplateData{
-			Hosts:          s.store.GetAll(),
-			CurrentHostIP:  currentIP,
-			CurrentVersion: types.Version,
+			Hosts:              allHosts,
+			CurrentHostIP:      currentIP,
+			CurrentVersion:     types.Version,
+			DuplicateHostnames: duplicateHostnames,
 		}
 
 		var buf bytes.Buffer
@@ -397,28 +579,19 @@ func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// Send datastar-patch-elements event
-		// We need to wrap the content in `data: elements ...`
+		// Send datastar-merge-fragments event
 		// Datastar expects:
-		// event: datastar-patch-elements
-		// data: elements <fragment>...
+		// event: datastar-merge-fragments
+		// data: fragments <fragment>...
 		
-		fmt.Fprintf(w, "event: datastar-patch-elements\n")
-		
-		// Split by line to prefix with "data: elements "
-		// Or just send one line if possible, but HTML has newlines.
-		// Datastar spec: "data: elements " followed by content.
-		// If content has newlines, each line must be prefixed?
-		// Actually, the example shows:
-		// data: elements <div id="hal">
-		// data: elements     I’m sorry...
+		fmt.Fprintf(w, "event: datastar-merge-fragments\n")
 		
 		lines := strings.Split(buf.String(), "\n")
 		for _, line := range lines {
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
-			fmt.Fprintf(w, "data: elements %s\n", line)
+			fmt.Fprintf(w, "data: fragments %s\n", line)
 		}
 		fmt.Fprintf(w, "\n")
 		flusher.Flush()
@@ -533,23 +706,39 @@ func (s *Server) handleReceiveHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backupPath, err := s.store.BackupCurrent(20)
-	if err != nil {
-		log.Printf("Error creating host backup: %v", err)
-		http.Error(w, "Failed to backup existing host list", http.StatusInternalServerError)
-		return
-	}
+	merge := r.URL.Query().Get("merge") == "true"
 
-	if err := s.store.ReplaceAll(hosts); err != nil {
-		log.Printf("Error replacing host list: %s", err)
-		http.Error(w, "Failed to update host list", http.StatusInternalServerError)
-		return
-	}
-
-	if backupPath != "" {
-		log.Printf("Received host list; previous copy moved to %s (count: %d)", backupPath, len(hosts))
+	if merge {
+		// Merge mode: Upsert received hosts, do not delete anything
+		count := 0
+		for _, h := range hosts {
+			if err := s.store.Upsert(h); err != nil {
+				log.Printf("Error merging host %s: %v", h.ID, err)
+			} else {
+				count++
+			}
+		}
+		log.Printf("Merged %d hosts from remote announcement", count)
 	} else {
-		log.Printf("Received host list from remote host (count: %d)", len(hosts))
+		// Replace mode: Overwrite entire host list (default for "Push to fleet")
+		backupPath, err := s.store.BackupCurrent(20)
+		if err != nil {
+			log.Printf("Error creating host backup: %v", err)
+			http.Error(w, "Failed to backup existing host list", http.StatusInternalServerError)
+			return
+		}
+
+		if err := s.store.ReplaceAll(hosts); err != nil {
+			log.Printf("Error replacing host list: %s", err)
+			http.Error(w, "Failed to update host list", http.StatusInternalServerError)
+			return
+		}
+
+		if backupPath != "" {
+			log.Printf("Received host list; previous copy moved to %s (count: %d)", backupPath, len(hosts))
+		} else {
+			log.Printf("Received host list from remote host (count: %d)", len(hosts))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -735,9 +924,15 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for interface override from query param
+	overrideIP := r.URL.Query().Get("interface_ip")
+	if overrideIP == "" {
+		overrideIP = os.Getenv("NSM_HOST_IP")
+	}
+
 	go func() {
 		log.Println("Starting network discovery scan...")
-		scanner := discovery.NewScanner(s.port)
+		scanner := discovery.NewScanner(s.port, overrideIP)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -749,13 +944,108 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 
 		count := 0
 		for host := range results {
-			// Check if host exists
-			if _, err := s.store.GetByIP(host.IP); err == nil {
-				continue // Already exists
+			// Try to get remote details
+			var remoteHost types.Host
+			client := http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Get(fmt.Sprintf("http://%s:%d/api/host/local", host.IP, host.Port))
+			if err == nil {
+				if json.NewDecoder(resp.Body).Decode(&remoteHost) == nil {
+					// We have full details!
+					// Ensure IP is correct (trust the discovery IP for reachability)
+					remoteHost.IPAddress = host.IP
+					remoteHost.DashboardURL = fmt.Sprintf("http://%s:%d", host.IP, host.Port)
+					
+					// Check for stale entries with same IP but different ID
+					if oldHost, err := s.store.GetByIP(host.IP); err == nil && oldHost.ID != remoteHost.ID {
+						log.Printf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteHost.ID)
+						s.store.Delete(oldHost.IPAddress)
+					}
+
+					if err := s.store.Upsert(remoteHost); err != nil {
+						log.Printf("Failed to upsert discovered host: %v", err)
+					} else {
+						log.Printf("Discovered and updated host: %s (ID: %s)", host.IP, remoteHost.ID)
+					}
+                    
+                    // Mutual discovery: Push ourselves to them
+                    go func(targetIP string) {
+                        if local, err := s.anthias.GetMetadata(); err == nil {
+                            // Get stored version for full details
+                            if stored, err := s.store.GetByID(local.ID); err == nil {
+                                local = stored
+                            }
+                            // Wrap in list
+                            hosts := []types.Host{*local}
+                            body, _ := json.Marshal(hosts)
+                            http.Post(fmt.Sprintf("http://%s:8080/api/hosts/receive?merge=true", targetIP), "application/json", bytes.NewBuffer(body))
+                        }
+                    }(host.IP)
+				}
+				resp.Body.Close()
+                continue
+			}
+
+			// Fallback for older versions (try /api/version)
+			// ... (keep existing logic or just skip?)
+			// If /api/host/local fails, maybe it's an old version.
+			// Let's keep the old logic as fallback?
+			// The user said "regular checking is not required".
+			// If we fail to get details, we can fall back to "Discovered Host".
+			
+			// Try to get remote ID (fallback)
+			var remoteID string
+			resp, err = client.Get(fmt.Sprintf("http://%s:%d/api/version", host.IP, host.Port))
+			if err == nil {
+				var v struct {
+					ID string `json:"id"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&v) == nil {
+					remoteID = v.ID
+				}
+				resp.Body.Close()
+			}
+
+			// ... (rest of old logic)
+
+			// If we have an ID, check by ID
+			if remoteID != "" {
+				if existing, err := s.store.GetByID(remoteID); err == nil {
+					// Host exists, update IP if changed
+					if existing.IPAddress != host.IP {
+						log.Printf("Host %s moved from %s to %s", remoteID, existing.IPAddress, host.IP)
+						existing.IPAddress = host.IP
+						existing.DashboardURL = fmt.Sprintf("http://%s:%d", host.IP, host.Port)
+						existing.Status = types.StatusUnreachable // Reset status
+						s.store.Upsert(*existing)
+						
+						// Trigger health check
+						go func(h types.Host) {
+							updated := h
+							hosts.CheckHealth(&updated)
+							s.store.Upsert(updated)
+						}(*existing)
+					}
+					continue // Already exists and updated if needed
+				} else {
+					// ID not found in DB. Check if we have a stale host with this IP.
+					if oldHost, err := s.store.GetByIP(host.IP); err == nil {
+						// We have a host at this IP, but with a different ID (since GetByID failed).
+						log.Printf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteID)
+						if err := s.store.Delete(oldHost.IPAddress); err != nil {
+							log.Printf("Failed to delete stale host: %v", err)
+						}
+					}
+				}
+			} else {
+				// Fallback to IP check
+				if _, err := s.store.GetByIP(host.IP); err == nil {
+					continue // Already exists by IP
+				}
 			}
 
 			// Add new host
 			newHost := types.Host{
+				ID:            remoteID,
 				Nickname:      "Discovered Host",
 				IPAddress:     host.IP,
 				Status:        types.StatusUnreachable,
@@ -766,24 +1056,19 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 				LastChecked:   time.Time{},
 			}
 
-			if err := s.store.Add(newHost); err != nil {
+			if err := s.store.Upsert(newHost); err != nil {
 				log.Printf("Failed to add discovered host %s: %v", host.IP, err)
 				continue
 			}
 			count++
-			log.Printf("Discovered and added new host: %s", host.IP)
+			log.Printf("Discovered and added new host: %s (ID: %s)", host.IP, remoteID)
 
 			// Check health of new host
 			go func(base types.Host) {
 				updated := base
 				hosts.CheckHealth(&updated)
-				if err := s.store.Update(base.IPAddress, func(h *types.Host) {
-					copyNetworkState(h, &updated)
-					if updated.Hostname != "" {
-						h.Hostname = updated.Hostname
-					}
-				}); err != nil {
-					log.Printf("Error persisting host health for %s: %v", base.IPAddress, err)
+				if err := s.store.Upsert(updated); err != nil {
+					log.Printf("Error refreshing host %s after update: %v", updated.IPAddress, err)
 				}
 			}(newHost)
 		}

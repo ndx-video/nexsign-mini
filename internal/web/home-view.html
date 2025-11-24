@@ -1,22 +1,23 @@
 <h2 class="text-xl font-semibold mb-3 text-desert-fg">Signage Fleet</h2>
 
-<div class="host-list"
-     id="host-list-container"
-     data-on-load="@get('/api/hosts/stream')">
+<div class="host-list" id="host-list-container" data-on-load="@get('/api/hosts/stream')">
 
-    <div class="mb-4 flex items-center gap-4 flex-wrap">
-        <a class="text-desert-cyan hover:text-desert-yellow underline text-sm cursor-pointer" 
-           data-on-click="@post('/api/hosts/check')">Check all hosts</a>
-        <a class="text-green-400 hover:text-green-300 underline text-sm cursor-pointer" onclick="pushSelected()">Push to selected hosts</a>
-        <a class="text-green-400/80 hover:text-green-300 underline text-xs cursor-pointer" onclick="pushAll()">(push all)</a>
-        <a class="text-blue-400 hover:text-blue-300 underline text-sm cursor-pointer" 
-           data-on-click="@post('/api/discovery/scan')">Scan Network</a>
+    <div class="flex items-center gap-4 mb-4">
+        <a class="text-green-400 hover:text-green-300 underline text-sm cursor-pointer" onclick="pushSelected()">Push to
+            selected hosts</a>
+        <a class="text-green-400/80 hover:text-green-300 underline text-xs cursor-pointer" onclick="pushAll()">(push
+            all)</a>
     </div>
+
+    <script>
+        // scanNetwork function removed as per instruction
+    </script>
 
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
         <thead>
             <tr class="bg-desert-gray text-left text-desert-tan text-sm">
-                <th class="px-2 py-3 w-8 text-center"><input id="select-all" type="checkbox" onchange="toggleSelectAll(this)"></th>
+                <th class="px-2 py-3 w-8 text-center"><input id="select-all" type="checkbox"
+                        onchange="toggleSelectAll(this)"></th>
                 <th class="px-4 py-3">Nickname [Hostname]</th>
                 <th class="px-4 py-3">LAN IP</th>
                 <th class="px-4 py-3">VPN IP</th>
@@ -32,359 +33,359 @@
     <div class="mt-4 p-3 bg-desert-gray rounded">
         <form id="add-host-form" onsubmit="addHost(event)" class="flex flex-wrap items-center gap-2">
             <input type="text" id="new-nickname" name="nickname" placeholder="Nickname"
-                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan w-36" />
+                class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan w-36" />
             <input type="text" id="new-lan-ip" name="ip_address" required placeholder="LAN IP"
-                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
+                class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
             <input type="text" id="new-vpn-ip" name="vpn_ip_address" placeholder="VPN IP"
-                   class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
+                class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan font-mono w-36" />
             <input type="text" id="new-notes" name="notes" placeholder="Notes"
-                   class="flex-1 min-w-[200px] bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan" />
-            <button type="submit" class="text-desert-darkgray bg-desert-cyan hover:bg-desert-yellow px-3 py-1 rounded text-sm">Add</button>
+                class="flex-1 min-w-[200px] bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan" />
+            <button type="submit"
+                class="text-desert-darkgray bg-desert-cyan hover:bg-desert-yellow px-3 py-1 rounded text-sm">Add</button>
         </form>
     </div>
 </div>
 
 <script>
-const HOST_TABLE_COLUMN_COUNT = 8;
-const ipv4Pattern = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+    const HOST_TABLE_COLUMN_COUNT = 8;
+    const ipv4Pattern = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
-function validateIPv4(value) {
-    if (!value) {
-        return false;
-    }
-    return ipv4Pattern.test(value);
-}
-
-window.toggleSelectAll = function(cb) {
-    document.querySelectorAll('.row-select').forEach(el => el.checked = cb.checked);
-}
-
-function getSelectedIPs() {
-    const ips = [];
-    document.querySelectorAll('tbody tr').forEach(tr => {
-        const checkbox = tr.querySelector('.row-select');
-        if (checkbox && checkbox.checked) {
-            const ip = tr.getAttribute('data-ip');
-            if (ip) ips.push(ip);
+    function validateIPv4(value) {
+        if (!value) {
+            return false;
         }
-    });
-    return ips;
-}
-
-window.pushSelected = function() {
-    const targets = getSelectedIPs();
-    if (targets.length === 0) {
-        alert('Select one or more hosts to push to.');
-        return;
-    }
-    fetch('/api/hosts/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targets })
-    }).then(() => {
-        // No need to trigger refresh, SSE will handle it if state changes
-    }).catch(() => {});
-}
-
-window.pushAll = function() {
-    fetch('/api/hosts/push', { method: 'POST' }).then(() => {
-        // No need to trigger refresh
-    }).catch(() => {});
-}
-
-window.enterEditMode = function(button) {
-    const row = button.closest('tr');
-
-    const nicknameDisplay = row.querySelector('.nickname-display');
-    const nicknameInput = row.querySelector('.nickname-edit');
-    const lanDisplay = row.querySelector('.ip-lan-display');
-    const lanInput = row.querySelector('.lan-ip-edit');
-    const vpnDisplay = row.querySelector('.vpn-ip-display');
-    const vpnInput = row.querySelector('.vpn-ip-edit');
-    const notesDisplay = row.querySelector('.notes-display');
-    const notesInput = row.querySelector('.notes-edit');
-
-    if (nicknameDisplay && nicknameInput) {
-        nicknameDisplay.classList.add('hidden');
-        nicknameInput.classList.remove('hidden');
+        return ipv4Pattern.test(value);
     }
 
-    if (lanDisplay && lanInput) {
-        lanDisplay.classList.add('hidden');
-        lanInput.classList.remove('hidden');
+    window.toggleSelectAll = function (cb) {
+        document.querySelectorAll('.row-select').forEach(el => el.checked = cb.checked);
     }
 
-    if (vpnDisplay && vpnInput) {
-        vpnDisplay.classList.add('hidden');
-        vpnInput.classList.remove('hidden');
+    function getSelectedIPs() {
+        const ips = [];
+        document.querySelectorAll('tbody tr').forEach(tr => {
+            const checkbox = tr.querySelector('.row-select');
+            if (checkbox && checkbox.checked) {
+                const ip = tr.getAttribute('data-ip');
+                if (ip) ips.push(ip);
+            }
+        });
+        return ips;
     }
 
-    if (notesDisplay && notesInput) {
-        notesDisplay.classList.add('hidden');
-        notesInput.classList.remove('hidden');
-    }
-
-    [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
-        if (el) {
-            el.dataset.originalValue = el.value;
+    window.pushSelected = function () {
+        const targets = getSelectedIPs();
+        if (targets.length === 0) {
+            alert('Select one or more hosts to push to.');
+            return;
         }
-    });
+        fetch('/api/hosts/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targets })
+        }).then(() => {
+            // No need to trigger refresh, SSE will handle it if state changes
+        }).catch(() => { });
+    }
 
-    row.querySelector('.edit-btn').classList.add('hidden');
-    row.querySelector('.save-btn').classList.remove('hidden');
-    row.querySelector('.cancel-btn').classList.remove('hidden');
+    window.pushAll = function () {
+        fetch('/api/hosts/push', { method: 'POST' }).then(() => {
+            // No need to trigger refresh
+        }).catch(() => { });
+    }
 
-    const enterHandler = (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            window.saveEdit(row.querySelector('.save-btn'));
+    window.enterEditMode = function (button) {
+        const row = button.closest('tr');
+
+        const nicknameDisplay = row.querySelector('.nickname-display');
+        const nicknameInput = row.querySelector('.nickname-edit');
+        const lanDisplay = row.querySelector('.ip-lan-display');
+        const lanInput = row.querySelector('.lan-ip-edit');
+        const vpnDisplay = row.querySelector('.vpn-ip-display');
+        const vpnInput = row.querySelector('.vpn-ip-edit');
+        const notesDisplay = row.querySelector('.notes-display');
+        const notesInput = row.querySelector('.notes-edit');
+
+        if (nicknameDisplay && nicknameInput) {
+            nicknameDisplay.classList.add('hidden');
+            nicknameInput.classList.remove('hidden');
+        }
+
+        if (lanDisplay && lanInput) {
+            lanDisplay.classList.add('hidden');
+            lanInput.classList.remove('hidden');
+        }
+
+        if (vpnDisplay && vpnInput) {
+            vpnDisplay.classList.add('hidden');
+            vpnInput.classList.remove('hidden');
+        }
+
+        if (notesDisplay && notesInput) {
+            notesDisplay.classList.add('hidden');
+            notesInput.classList.remove('hidden');
+        }
+
+        [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
+            if (el) {
+                el.dataset.originalValue = el.value;
+            }
+        });
+
+        row.querySelector('.edit-btn').classList.add('hidden');
+        row.querySelector('.save-btn').classList.remove('hidden');
+        row.querySelector('.cancel-btn').classList.remove('hidden');
+
+        const enterHandler = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                window.saveEdit(row.querySelector('.save-btn'));
+            }
+        };
+
+        [nicknameInput, lanInput, vpnInput].forEach(el => el && el.addEventListener('keydown', enterHandler));
+        notesInput && notesInput.addEventListener('keydown', enterHandler);
+
+        if (lanInput) {
+            lanInput.focus();
         }
     };
 
-    [nicknameInput, lanInput, vpnInput].forEach(el => el && el.addEventListener('keydown', enterHandler));
-    notesInput && notesInput.addEventListener('keydown', enterHandler);
+    window.cancelEdit = function (button) {
+        const row = button.closest('tr');
 
-    if (lanInput) {
-        lanInput.focus();
-    }
-};
+        const nicknameDisplay = row.querySelector('.nickname-display');
+        const nicknameInput = row.querySelector('.nickname-edit');
+        const lanDisplay = row.querySelector('.ip-lan-display');
+        const lanInput = row.querySelector('.lan-ip-edit');
+        const vpnDisplay = row.querySelector('.vpn-ip-display');
+        const vpnInput = row.querySelector('.vpn-ip-edit');
+        const notesDisplay = row.querySelector('.notes-display');
+        const notesInput = row.querySelector('.notes-edit');
 
-window.cancelEdit = function(button) {
-    const row = button.closest('tr');
+        [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
+            if (el && typeof el.dataset.originalValue !== 'undefined') {
+                el.value = el.dataset.originalValue;
+            }
+        });
 
-    const nicknameDisplay = row.querySelector('.nickname-display');
-    const nicknameInput = row.querySelector('.nickname-edit');
-    const lanDisplay = row.querySelector('.ip-lan-display');
-    const lanInput = row.querySelector('.lan-ip-edit');
-    const vpnDisplay = row.querySelector('.vpn-ip-display');
-    const vpnInput = row.querySelector('.vpn-ip-edit');
-    const notesDisplay = row.querySelector('.notes-display');
-    const notesInput = row.querySelector('.notes-edit');
-
-    [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
-        if (el && typeof el.dataset.originalValue !== 'undefined') {
-            el.value = el.dataset.originalValue;
+        if (nicknameDisplay && nicknameInput) {
+            nicknameDisplay.classList.remove('hidden');
+            nicknameInput.classList.add('hidden');
         }
-    });
-
-    if (nicknameDisplay && nicknameInput) {
-        nicknameDisplay.classList.remove('hidden');
-        nicknameInput.classList.add('hidden');
-    }
-    if (lanDisplay && lanInput) {
-        lanDisplay.classList.remove('hidden');
-        lanInput.classList.add('hidden');
-    }
-    if (vpnDisplay && vpnInput) {
-        vpnDisplay.classList.remove('hidden');
-        vpnInput.classList.add('hidden');
-    }
-    if (notesDisplay && notesInput) {
-        notesDisplay.classList.remove('hidden');
-        notesInput.classList.add('hidden');
-    }
-
-    row.querySelector('.edit-btn').classList.remove('hidden');
-    row.querySelector('.save-btn').classList.add('hidden');
-    row.querySelector('.cancel-btn').classList.add('hidden');
-};
-
-window.saveEdit = function(button) {
-    const row = button.closest('tr');
-    const oldIP = row.dataset.ip;
-
-    const nicknameInput = row.querySelector('.nickname-edit');
-    const lanInput = row.querySelector('.lan-ip-edit');
-    const vpnInput = row.querySelector('.vpn-ip-edit');
-    const notesInput = row.querySelector('.notes-edit');
-
-    const nickname = nicknameInput ? nicknameInput.value.trim() : '';
-    const newIP = lanInput ? lanInput.value.trim() : '';
-    const newVPN = vpnInput ? vpnInput.value.trim() : '';
-    const notes = notesInput ? notesInput.value.trim() : '';
-
-    if (!validateIPv4(newIP)) {
-        alert('Please enter a valid LAN IPv4 address.');
-        return;
-    }
-
-    if (newVPN && !validateIPv4(newVPN)) {
-        alert('VPN IP address must be a valid IPv4 format.');
-        return;
-    }
-
-    fetch('/api/hosts/update', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            old_ip: oldIP,
-            ip_address: newIP,
-            vpn_ip_address: newVPN,
-            nickname: nickname,
-            notes: notes
-        })
-    }).then(resp => {
-        if (!resp.ok) {
-            throw new Error('update failed');
+        if (lanDisplay && lanInput) {
+            lanDisplay.classList.remove('hidden');
+            lanInput.classList.add('hidden');
         }
-        // SSE will update the row
-    }).catch(() => {
-        alert('Failed to update host. Please try again.');
-    });
-};
-
-window.addHost = function(event) {
-    event.preventDefault();
-
-    const nicknameInput = document.getElementById('new-nickname');
-    const lanInput = document.getElementById('new-lan-ip');
-    const vpnInput = document.getElementById('new-vpn-ip');
-    const notesInput = document.getElementById('new-notes');
-
-    const nickname = nicknameInput.value.trim();
-    const lanIP = lanInput.value.trim();
-    const vpnIP = vpnInput.value.trim();
-    const notes = notesInput.value.trim();
-
-    if (!validateIPv4(lanIP)) {
-        alert('Please enter a valid LAN IPv4 address.');
-        return;
-    }
-
-    if (vpnIP && !validateIPv4(vpnIP)) {
-        alert('VPN IP address must be a valid IPv4 format.');
-        return;
-    }
-
-    fetch('/api/hosts/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            nickname: nickname,
-            ip_address: lanIP,
-            vpn_ip_address: vpnIP,
-            notes: notes
-        })
-    }).then(resp => {
-        if (!resp.ok) {
-            throw new Error('add failed');
+        if (vpnDisplay && vpnInput) {
+            vpnDisplay.classList.remove('hidden');
+            vpnInput.classList.add('hidden');
+        }
+        if (notesDisplay && notesInput) {
+            notesDisplay.classList.remove('hidden');
+            notesInput.classList.add('hidden');
         }
 
-        nicknameInput.value = '';
-        lanInput.value = '';
-        vpnInput.value = '';
-        notesInput.value = '';
+        row.querySelector('.edit-btn').classList.remove('hidden');
+        row.querySelector('.save-btn').classList.add('hidden');
+        row.querySelector('.cancel-btn').classList.add('hidden');
+    };
 
-        lanInput.blur();
-    }).catch(() => {
-        alert('Failed to add host. Please try again.');
-    });
-};
+    window.saveEdit = function (button) {
+        const row = button.closest('tr');
+        const oldIP = row.dataset.ip;
 
-window.toggleInfo = function(button, ip) {
-    const row = button.closest('tr');
-    const existingInfoRow = document.querySelector('.info-row');
+        const nicknameInput = row.querySelector('.nickname-edit');
+        const lanInput = row.querySelector('.lan-ip-edit');
+        const vpnInput = row.querySelector('.vpn-ip-edit');
+        const notesInput = row.querySelector('.notes-edit');
 
-    if (existingInfoRow) {
-        existingInfoRow.remove();
-        if (existingInfoRow.dataset.ip === ip) {
+        const nickname = nicknameInput ? nicknameInput.value.trim() : '';
+        const newIP = lanInput ? lanInput.value.trim() : '';
+        const newVPN = vpnInput ? vpnInput.value.trim() : '';
+        const notes = notesInput ? notesInput.value.trim() : '';
+
+        if (!validateIPv4(newIP)) {
+            alert('Please enter a valid LAN IPv4 address.');
             return;
         }
-    }
 
-    const infoRow = document.createElement('tr');
-    infoRow.className = 'info-row bg-black';
-    infoRow.dataset.ip = ip;
-
-    const infoCell = document.createElement('td');
-    infoCell.colSpan = HOST_TABLE_COLUMN_COUNT;
-    infoCell.className = 'px-4 py-4';
-    infoCell.innerHTML = '<div class="text-desert-tan text-sm"><span class="text-cyan-400 italic">Loading device information...</span></div>';
-
-    infoRow.appendChild(infoCell);
-    row.after(infoRow);
-
-    Promise.all([
-        fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v2/device_settings`).then(r => r.ok ? r.json() : null),
-        fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v1/info`).then(r => r.ok ? r.json() : null),
-        fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v1/assets?format=json`).then(r => r.ok ? r.json() : null)
-    ]).then(([settings, info, assets]) => {
-        let html = '<div class="text-desert-tan text-sm space-y-3">';
-
-        if (settings) {
-            html += '<div class="font-semibold text-desert-cyan mb-2">Device Settings:</div>';
-            html += '<div class="grid grid-cols-3 gap-x-4 gap-y-2 ml-4">';
-            for (const [key, value] of Object.entries(settings)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    let displayValue = value;
-                    if (typeof value === 'boolean') {
-                        displayValue = value ? 'Yes' : 'No';
-                    }
-                    html += `<div><span class="text-gray-400">${label}:</span> ${displayValue}</div>`;
-                }
-            }
-            html += '</div>';
+        if (newVPN && !validateIPv4(newVPN)) {
+            alert('VPN IP address must be a valid IPv4 format.');
+            return;
         }
 
-        if (info) {
-            html += '<div class="font-semibold text-desert-cyan mt-3 mb-2">System Info:</div>';
-            html += '<div class="grid grid-cols-3 gap-x-4 gap-y-2 ml-4">';
-            for (const [key, value] of Object.entries(info)) {
-                if (value !== null && value !== undefined && value !== '') {
-                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    html += `<div><span class="text-gray-400">${label}:</span> ${value}</div>`;
-                }
+        fetch('/api/hosts/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                old_ip: oldIP,
+                ip_address: newIP,
+                vpn_ip_address: newVPN,
+                nickname: nickname,
+                notes: notes
+            })
+        }).then(resp => {
+            if (!resp.ok) {
+                throw new Error('update failed');
             }
-            html += '</div>';
+            // SSE will update the row
+        }).catch(() => {
+            alert('Failed to update host. Please try again.');
+        });
+    };
+
+    window.addHost = function (event) {
+        event.preventDefault();
+
+        const nicknameInput = document.getElementById('new-nickname');
+        const lanInput = document.getElementById('new-lan-ip');
+        const vpnInput = document.getElementById('new-vpn-ip');
+        const notesInput = document.getElementById('new-notes');
+
+        const nickname = nicknameInput.value.trim();
+        const lanIP = lanInput.value.trim();
+        const vpnIP = vpnInput.value.trim();
+        const notes = notesInput.value.trim();
+
+        if (!validateIPv4(lanIP)) {
+            alert('Please enter a valid LAN IPv4 address.');
+            return;
         }
 
-        if (assets && Array.isArray(assets)) {
-            html += '<div class="font-semibold text-desert-cyan mt-3 mb-2">Assets: ' + assets.length + '</div>';
-            if (assets.length > 0) {
-                const mediaAssets = assets.filter(a =>
-                    a.mimetype && (a.mimetype.startsWith('image/') || a.mimetype.startsWith('video/'))
-                ).slice(0, 5);
+        if (vpnIP && !validateIPv4(vpnIP)) {
+            alert('VPN IP address must be a valid IPv4 format.');
+            return;
+        }
 
-                if (mediaAssets.length > 0) {
-                    html += '<div class="ml-4 mb-3 flex gap-2 flex-wrap">';
-                    mediaAssets.forEach(asset => {
-                        if (asset.uri) {
-                            const thumbnailUrl = `http://${ip}${asset.uri}`;
-                            if (asset.mimetype.startsWith('image/')) {
-                                html += `<img src="${thumbnailUrl}" class="h-20 w-auto object-cover rounded border border-gray-600" title="${asset.name || 'Unnamed'}" onerror="this.style.display='none'">`;
-                            } else if (asset.mimetype.startsWith('video/')) {
-                                html += `<video class="h-20 w-auto object-cover rounded border border-gray-600" title="${asset.name || 'Unnamed'}" muted><source src="${thumbnailUrl}" type="${asset.mimetype}"></video>`;
-                            }
+        fetch('/api/hosts/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nickname: nickname,
+                ip_address: lanIP,
+                vpn_ip_address: vpnIP,
+                notes: notes
+            })
+        }).then(resp => {
+            if (!resp.ok) {
+                throw new Error('add failed');
+            }
+
+            nicknameInput.value = '';
+            lanInput.value = '';
+            vpnInput.value = '';
+            notesInput.value = '';
+
+            lanInput.blur();
+        }).catch(() => {
+            alert('Failed to add host. Please try again.');
+        });
+    };
+
+    window.toggleInfo = function (button, ip) {
+        const row = button.closest('tr');
+        const existingInfoRow = document.querySelector('.info-row');
+
+        if (existingInfoRow) {
+            existingInfoRow.remove();
+            if (existingInfoRow.dataset.ip === ip) {
+                return;
+            }
+        }
+
+        const infoRow = document.createElement('tr');
+        infoRow.className = 'info-row bg-black';
+        infoRow.dataset.ip = ip;
+
+        const infoCell = document.createElement('td');
+        infoCell.colSpan = HOST_TABLE_COLUMN_COUNT;
+        infoCell.className = 'px-4 py-4';
+        infoCell.innerHTML = '<div class="text-desert-tan text-sm"><span class="text-cyan-400 italic">Loading device information...</span></div>';
+
+        infoRow.appendChild(infoCell);
+        row.after(infoRow);
+
+        Promise.all([
+            fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v2/device_settings`).then(r => r.ok ? r.json() : null),
+            fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v1/info`).then(r => r.ok ? r.json() : null),
+            fetch(`/api/proxy/anthias?ip=${ip}&path=/api/v1/assets?format=json`).then(r => r.ok ? r.json() : null)
+        ]).then(([settings, info, assets]) => {
+            let html = '<div class="text-desert-tan text-sm space-y-3">';
+
+            if (settings) {
+                html += '<div class="font-semibold text-desert-cyan mb-2">Device Settings:</div>';
+                html += '<div class="grid grid-cols-3 gap-x-4 gap-y-2 ml-4">';
+                for (const [key, value] of Object.entries(settings)) {
+                    if (value !== null && value !== undefined && value !== '') {
+                        const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        let displayValue = value;
+                        if (typeof value === 'boolean') {
+                            displayValue = value ? 'Yes' : 'No';
                         }
+                        html += `<div><span class="text-gray-400">${label}:</span> ${displayValue}</div>`;
+                    }
+                }
+                html += '</div>';
+            }
+
+            if (info) {
+                html += '<div class="font-semibold text-desert-cyan mt-3 mb-2">System Info:</div>';
+                html += '<div class="grid grid-cols-3 gap-x-4 gap-y-2 ml-4">';
+                for (const [key, value] of Object.entries(info)) {
+                    if (value !== null && value !== undefined && value !== '') {
+                        const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        html += `<div><span class="text-gray-400">${label}:</span> ${value}</div>`;
+                    }
+                }
+                html += '</div>';
+            }
+
+            if (assets && Array.isArray(assets)) {
+                html += '<div class="font-semibold text-desert-cyan mt-3 mb-2">Assets: ' + assets.length + '</div>';
+                if (assets.length > 0) {
+                    const mediaAssets = assets.filter(a =>
+                        a.mimetype && (a.mimetype.startsWith('image/') || a.mimetype.startsWith('video/'))
+                    ).slice(0, 5);
+
+                    if (mediaAssets.length > 0) {
+                        html += '<div class="ml-4 mb-3 flex gap-2 flex-wrap">';
+                        mediaAssets.forEach(asset => {
+                            if (asset.uri) {
+                                const thumbnailUrl = `http://${ip}${asset.uri}`;
+                                if (asset.mimetype.startsWith('image/')) {
+                                    html += `<img src="${thumbnailUrl}" class="h-20 w-auto object-cover rounded border border-gray-600" title="${asset.name || 'Unnamed'}" onerror="this.style.display='none'">`;
+                                } else if (asset.mimetype.startsWith('video/')) {
+                                    html += `<video class="h-20 w-auto object-cover rounded border border-gray-600" title="${asset.name || 'Unnamed'}" muted><source src="${thumbnailUrl}" type="${asset.mimetype}"></video>`;
+                                }
+                            }
+                        });
+                        html += '</div>';
+                    }
+
+                    html += '<div class="ml-4 space-y-1 max-h-40 overflow-y-auto">';
+                    assets.forEach(asset => {
+                        html += `<div class="text-xs flex items-center gap-2">`;
+                        if (asset.is_enabled) html += `<span class="text-green-400">●</span>`;
+                        else html += `<span class="text-gray-600">○</span>`;
+                        html += `<span class="text-gray-300">${asset.name || 'Unnamed'}</span>`;
+                        if (asset.mimetype) html += ` <span class="text-gray-500">(${asset.mimetype})</span>`;
+                        if (asset.duration) html += ` <span class="text-gray-500">${asset.duration}s</span>`;
+                        html += `</div>`;
                     });
                     html += '</div>';
                 }
-
-                html += '<div class="ml-4 space-y-1 max-h-40 overflow-y-auto">';
-                assets.forEach(asset => {
-                    html += `<div class="text-xs flex items-center gap-2">`;
-                    if (asset.is_enabled) html += `<span class="text-green-400">●</span>`;
-                    else html += `<span class="text-gray-600">○</span>`;
-                    html += `<span class="text-gray-300">${asset.name || 'Unnamed'}</span>`;
-                    if (asset.mimetype) html += ` <span class="text-gray-500">(${asset.mimetype})</span>`;
-                    if (asset.duration) html += ` <span class="text-gray-500">${asset.duration}s</span>`;
-                    html += `</div>`;
-                });
-                html += '</div>';
             }
-        }
 
-        html += '</div>';
+            html += '</div>';
 
-        if (!settings && !info && !assets) {
-            html = '<div class="text-red-400 text-sm">Failed to retrieve device information. Anthias API may be unavailable.</div>';
-        }
+            if (!settings && !info && !assets) {
+                html = '<div class="text-red-400 text-sm">Failed to retrieve device information. Anthias API may be unavailable.</div>';
+            }
 
-        infoCell.innerHTML = html;
-    }).catch(() => {
-        infoCell.innerHTML = '<div class="text-red-400 text-sm">Error fetching device information.</div>';
-    });
-};
+            infoCell.innerHTML = html;
+        }).catch(() => {
+            infoCell.innerHTML = '<div class="text-red-400 text-sm">Error fetching device information.</div>';
+        });
+    };
 </script>
-

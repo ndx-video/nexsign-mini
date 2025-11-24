@@ -33,6 +33,7 @@ const (
 // Host represents a single Anthias digital signage host on the network.
 // Hosts are identified by IP address and managed manually via the dashboard.
 type Host struct {
+	ID                string           `json:"id"`                            // Unique identifier for the host (UUID)
 	Nickname          string           `json:"nickname"`                      // Optional: user-friendly label displayed in UI
 	IPAddress         string           `json:"ip_address"`                    // Required: LAN IP address of the host
 	VPNIPAddress      string           `json:"vpn_ip_address,omitempty"`      // Optional: Tailnet/Tailscale IP address

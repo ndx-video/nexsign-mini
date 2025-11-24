@@ -187,9 +187,10 @@ func deployHost(host, keyPath, binaryPath, webDir, remoteDir string) error {
 		return fmt.Errorf("stop remote binary: %w", err)
 	}
 
-	prepCmd := fmt.Sprintf("rm -rf %[1]s && mkdir -p %[1]s/internal/web/static", remoteDir)
-	if err := sshRun(sshTarget, keyPath, prepCmd, 20*time.Second); err != nil {
-		return fmt.Errorf("prepare remote directories: %w", err)
+	// Clean up database to force fresh start, but try to preserve identity
+	cleanCmd := fmt.Sprintf("rm -f %[1]s/hosts.db %[1]s/hosts.json && mkdir -p %[1]s/internal/web/static", remoteDir)
+	if err := sshRun(sshTarget, keyPath, cleanCmd, 20*time.Second); err != nil {
+		return fmt.Errorf("clean remote directories: %w", err)
 	}
 
 	// Push binary via rsync.
@@ -214,6 +215,12 @@ func deployHost(host, keyPath, binaryPath, webDir, remoteDir string) error {
 	// Give the process a moment to start, then verify.
 	time.Sleep(2 * time.Second)
 	if err := sshRun(sshTarget, keyPath, "pgrep -f 'nsm$'", 5*time.Second); err != nil {
+		// Fetch log to debug startup failure
+		log.Printf("%s Process failed to start. Fetching nsm.log...", logPrefix)
+		logCmd := fmt.Sprintf("cat %s/nsm.log", remoteDir)
+		if logErr := sshRun(sshTarget, keyPath, logCmd, 5*time.Second); logErr != nil {
+			log.Printf("%s Failed to fetch log: %v", logPrefix, logErr)
+		}
 		return fmt.Errorf("verify process running: %w", err)
 	}
 
@@ -254,6 +261,9 @@ func rsyncCopy(src, dest, keyPath string) error {
 	args := []string{
 		"-az",
 		"--delete",
+		"--exclude=identity.id",
+		"--exclude=hosts.db",
+		"--exclude=hosts.json",
 		"-e", fmt.Sprintf("ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=no", keyPath),
 		src,
 		dest,

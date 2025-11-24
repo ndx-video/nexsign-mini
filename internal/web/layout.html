@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>nexSign mini Dashboard</title>
-    <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
+    <script type="module"
+        src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
     <!-- Tailwind CSS via CDN (sufficient for dev/test; swap to compiled CSS for prod if needed) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -32,18 +34,33 @@
     </script>
     <style>
         /* Minimal custom styles kept for iframe sizing */
-        html, body { height: 100%; }
-        iframe { border: none; width: 100%; height: 100%; background-color: #333; }
-        a { cursor: pointer; }
+        html,
+        body {
+            height: 100%;
+        }
+
+        iframe {
+            border: none;
+            width: 100%;
+            height: 100%;
+            background-color: #333;
+        }
+
+        a {
+            cursor: pointer;
+        }
     </style>
 </head>
+
 <body class="min-h-screen flex flex-col bg-desert-bg text-desert-tan">
 
     <nav class="w-full bg-desert-darkgray border-b border-desert-gray h-14 px-4 flex items-center justify-between">
         <div class="breadcrumbs flex items-center gap-2 text-sm">
-            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer" hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
+            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
+                data-on-click="@get('/views/home')">Home</a>
             <span class="text-desert-gray">/</span>
-            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer" hx-get="/views/advanced" hx-target="#content-area" hx-push-url="/advanced">Advanced</a>
+            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
+                data-on-click="@get('/views/advanced')">Advanced</a>
         </div>
         <div class="text-lg font-semibold text-desert-cyan inline-flex items-center gap-2">NSM Dashboard
             <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}}</span>
@@ -51,10 +68,11 @@
         <div class="text-xs text-desert-gray select-none">nexSign mini</div>
     </nav>
 
-    <!-- This is the main content area that HTMX will update -->
-    <div id="content-area" class="flex-1 p-4" hx-get="/views/home" hx-trigger="load" hx-swap="innerHTML">
+    <!-- This is the main content area that Datastar will update -->
+    <div id="content-area" class="flex-1 p-4" data-on-load="@get('/views/home')">
         <!-- Initial content (like a loading spinner) could go here -->
     </div>
 
 </body>
+
 </html>
