@@ -36,6 +36,7 @@ type Store struct {
 	db        *sql.DB
 	file      string
 	backupDir string
+	updates   chan struct{}
 }
 
 type backupInfo struct {
@@ -57,6 +58,7 @@ func NewStore(filePath string) (*Store, error) {
 	s := &Store{
 		file:      absPath,
 		backupDir: filepath.Join(filepath.Dir(absPath), defaultBackupDirName),
+		updates:   make(chan struct{}, 1),
 	}
 
 	if err := os.MkdirAll(s.backupDir, 0o755); err != nil {
@@ -78,6 +80,18 @@ func NewStore(filePath string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// Updates returns a channel that receives a value whenever the host list changes.
+func (s *Store) Updates() <-chan struct{} {
+	return s.updates
+}
+
+func (s *Store) notify() {
+	select {
+	case s.updates <- struct{}{}:
+	default:
+	}
 }
 
 // Close releases the underlying database connection.
@@ -379,6 +393,7 @@ func (s *Store) Add(host types.Host) error {
 	if err != nil {
 		return fmt.Errorf("insert host: %w", err)
 	}
+	s.notify()
 	return nil
 }
 
@@ -434,6 +449,7 @@ func (s *Store) Update(ip string, updater func(*types.Host)) error {
 	if err != nil {
 		return fmt.Errorf("update host: %w", err)
 	}
+	s.notify()
 	return nil
 }
 
@@ -452,6 +468,7 @@ func (s *Store) Delete(ip string) error {
 		return fmt.Errorf("host not found: %s", ip)
 	}
 
+	s.notify()
 	return nil
 }
 
@@ -494,6 +511,7 @@ func (s *Store) ReplaceAll(hosts []types.Host) error {
 		return fmt.Errorf("commit replace: %w", err)
 	}
 
+	s.notify()
 	return nil
 }
 

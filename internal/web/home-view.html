@@ -2,19 +2,15 @@
 
 <div class="host-list"
      id="host-list-container"
-     hx-get="/views/home"
-     hx-trigger="refreshHosts from:body"
-     hx-swap="innerHTML"
-     hx-select=".host-list"
-     hx-target=".host-list">
+     data-on-load="@get('/api/hosts/stream')">
 
     <div class="mb-4 flex items-center gap-4 flex-wrap">
-        <a class="text-desert-cyan hover:text-desert-yellow underline text-sm" onclick="checkAllHostsWithSSE()">Check all hosts</a>
-        <a class="text-green-400 hover:text-green-300 underline text-sm" onclick="pushSelected()">Push to selected hosts</a>
-        <a class="text-green-400/80 hover:text-green-300 underline text-xs" onclick="pushAll()">(push all)</a>
-        <span class="text-desert-tan text-sm">
-            Auto-refresh in <span id="countdown-container"><span id="countdown" class="font-bold text-desert-cyan">10</span>s</span>
-        </span>
+        <a class="text-desert-cyan hover:text-desert-yellow underline text-sm cursor-pointer" 
+           data-on-click="@post('/api/hosts/check')">Check all hosts</a>
+        <a class="text-green-400 hover:text-green-300 underline text-sm cursor-pointer" onclick="pushSelected()">Push to selected hosts</a>
+        <a class="text-green-400/80 hover:text-green-300 underline text-xs cursor-pointer" onclick="pushAll()">(push all)</a>
+        <a class="text-blue-400 hover:text-blue-300 underline text-sm cursor-pointer" 
+           data-on-click="@post('/api/discovery/scan')">Scan Network</a>
     </div>
 
     <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
@@ -30,206 +26,7 @@
                 <th class="px-4 py-3">Actions</th>
             </tr>
         </thead>
-        <tbody class="divide-y divide-desert-gray">
-            {{range .Hosts}}
-            <tr data-ip="{{.IPAddress}}" data-vpn="{{.VPNIPAddress}}" data-hostname="{{.Hostname}}">
-                <td class="px-2 py-2 align-top text-center"><input type="checkbox" class="row-select"></td>
-                <td class="px-4 py-2 align-top">
-                    <div class="nickname-display text-desert-tan">
-                        {{if .Nickname}}{{.Nickname}}{{else}}<span class="text-desert-gray italic">unnamed</span>{{end}}
-                        {{if .Hostname}} <span class="text-desert-gray text-xs">({{.Hostname}})</span>{{end}}
-                        {{if or (eq .IPAddress $.CurrentHostIP) (and .VPNIPAddress (eq .VPNIPAddress $.CurrentHostIP))}}
-                            <span class="text-desert-cyan text-xs">(current)</span>
-                        {{end}}
-                    </div>
-                    <input type="text"
-                           class="nickname-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full"
-                           value="{{.Nickname}}"
-                           placeholder="Friendly label">
-                </td>
-                <td class="px-4 py-2 align-top">
-                    <div class="ip-lan-display text-desert-tan font-mono">
-                        {{.IPAddress}}
-                        <span class="checking-indicator invisible text-orange-400 italic text-xs ml-2">(checking)</span>
-                    </div>
-                    <input type="text"
-                           class="lan-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
-                           value="{{.IPAddress}}"
-                           placeholder="192.168.1.100">
-                </td>
-                <td class="px-4 py-2 align-top">
-                    <div class="vpn-ip-display font-mono {{if .VPNIPAddress}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
-                        {{if .VPNIPAddress}}{{.VPNIPAddress}}{{else}}—{{end}}
-                    </div>
-                    <input type="text"
-                           class="vpn-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
-                           value="{{.VPNIPAddress}}"
-                           placeholder="100.64.x.x">
-                </td>
-                <td class="px-4 py-2 align-top">
-                    <div class="flex flex-col gap-1">
-                        <div class="inline-flex items-center gap-2">
-                            {{if eq .Status "healthy"}}
-                            <span class="w-2 h-2 rounded-full bg-green-500" title="NSM Online (LAN)"></span>
-                            <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf "http://%s:8080" .IPAddress}}{{end}}"
-                               target="_blank" rel="noopener noreferrer"
-                               class="text-green-400 hover:text-green-300 underline">
-                                NSM Online (LAN)
-                            </a>
-                            {{else if eq .Status "stale"}}
-                            <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
-                            <div class="flex flex-col leading-tight">
-                                <a href="{{if .DashboardURL}}{{.DashboardURL}}{{else}}{{printf "http://%s:8080" .IPAddress}}{{end}}"
-                                   target="_blank" rel="noopener noreferrer"
-                                   class="text-green-400 hover:text-green-300 underline">
-                                    NSM Online (LAN)
-                                </a>
-                                <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
-                                    stale {{if .NSMVersion}}v{{.NSMVersion}}{{else}}unknown{{end}}
-                                </span>
-                            </div>
-                            <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
-                                    hx-post="/api/hosts/upgrade"
-                                    hx-vals='{"target_ip":"{{.IPAddress}}"}'
-                                    hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.IPAddress}}?"
-                                    hx-swap="none">
-                                Upgrade
-                            </button>
-                            {{else if eq .Status "unhealthy"}}
-                            <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
-                            <button class="text-yellow-400 hover:text-yellow-300 underline cursor-pointer"
-                                    hx-post="/api/hosts/upgrade"
-                                    hx-vals='{"target_ip":"{{.IPAddress}}"}'
-                                    hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.IPAddress}}?"
-                                    hx-swap="none">
-                                Unhealthy (LAN)
-                            </button>
-                            {{else if eq .Status "connection_refused"}}
-                            <span class="w-2 h-2 rounded-full bg-orange-500" title="Connection Refused"></span>
-                            <span class="text-orange-400">Connection Refused (LAN)</span>
-                            {{else}}
-                            <span class="w-2 h-2 rounded-full bg-red-500" title="Unreachable"></span>
-                            <span class="text-red-400">Unreachable (LAN)</span>
-                            {{end}}
-                        </div>
-                        {{if .VPNIPAddress}}
-                        <div class="inline-flex items-center gap-2">
-                            {{if eq .StatusVPN "healthy"}}
-                            <span class="w-2 h-2 rounded-full bg-green-500" title="NSM Online (VPN)"></span>
-                            <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf "http://%s:8080" .VPNIPAddress}}{{end}}"
-                               target="_blank" rel="noopener noreferrer"
-                               class="text-green-400 hover:text-green-300 underline">
-                                NSM Online (VPN)
-                            </a>
-                            {{else if eq .StatusVPN "stale"}}
-                            <span class="w-2 h-2 rounded-full bg-purple-500" title="Stale - Update Required"></span>
-                            <div class="flex flex-col leading-tight">
-                                <a href="{{if .DashboardURLVPN}}{{.DashboardURLVPN}}{{else}}{{printf "http://%s:8080" .VPNIPAddress}}{{end}}"
-                                   target="_blank" rel="noopener noreferrer"
-                                   class="text-green-400 hover:text-green-300 underline">
-                                    NSM Online (VPN)
-                                </a>
-                                <span class="inline-flex items-center w-fit px-2 py-0.5 text-[0.6rem] uppercase tracking-widest rounded bg-desert-darkgray text-purple-300 border border-purple-500/60">
-                                    stale {{if .NSMVersionVPN}}v{{.NSMVersionVPN}}{{else}}unknown{{end}}
-                                </span>
-                            </div>
-                            <button class="text-purple-400 hover:text-purple-300 underline cursor-pointer"
-                                    hx-post="/api/hosts/upgrade"
-                                    hx-vals='{"target_ip":"{{.VPNIPAddress}}"}'
-                                    hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.VPNIPAddress}}?"
-                                    hx-swap="none">
-                                Upgrade
-                            </button>
-                            {{else if eq .StatusVPN "unhealthy"}}
-                            <span class="w-2 h-2 rounded-full bg-yellow-500" title="Unhealthy"></span>
-                            <button class="text-yellow-400 hover:text-yellow-300 underline cursor-pointer"
-                                    hx-post="/api/hosts/upgrade"
-                                    hx-vals='{"target_ip":"{{.VPNIPAddress}}"}'
-                                    hx-confirm="Run package upgrade (apt update && apt upgrade -y) on {{.VPNIPAddress}}?"
-                                    hx-swap="none">
-                                Unhealthy (VPN)
-                            </button>
-                            {{else if eq .StatusVPN "connection_refused"}}
-                            <span class="w-2 h-2 rounded-full bg-orange-500" title="Connection Refused"></span>
-                            <span class="text-orange-400">Connection Refused (VPN)</span>
-                            {{else if .StatusVPN}}
-                            <span class="w-2 h-2 rounded-full bg-red-500" title="Unreachable"></span>
-                            <span class="text-red-400">Unreachable (VPN)</span>
-                            {{else}}
-                            <span class="text-gray-500">No NSM data (VPN)</span>
-                            {{end}}
-                        </div>
-                        {{end}}
-                    </div>
-                </td>
-                <td class="px-4 py-2 align-top">
-                    <div class="flex flex-col gap-1">
-                        <div>
-                            {{if eq .CMSStatus "CMS Online"}}
-                            <a href="http://{{.IPAddress}}" target="_blank" rel="noopener noreferrer"
-                               class="text-green-400 hover:text-green-300 cursor-pointer underline">
-                                CMS Online (LAN){{if gt .AssetCount 0}} ({{.AssetCount}}){{end}}
-                            </a>
-                            {{else if eq .CMSStatus "CMS Offline"}}
-                            <button class="text-red-400 hover:text-red-300 cursor-pointer underline"
-                                    hx-post="/api/hosts/reboot"
-                                    hx-vals='{"target_ip":"{{.IPAddress}}"}'
-                                    hx-confirm="Reboot host {{.IPAddress}}? This will stop Docker and restart the system."
-                                    hx-swap="none">
-                                CMS Offline (LAN)
-                            </button>
-                            {{else}}
-                            <span class="text-gray-400">CMS Unknown (LAN)</span>
-                            {{end}}
-                        </div>
-                        {{if .VPNIPAddress}}
-                        <div>
-                            {{if eq .CMSStatusVPN "CMS Online"}}
-                            <a href="http://{{.VPNIPAddress}}" target="_blank" rel="noopener noreferrer"
-                               class="text-green-400 hover:text-green-300 cursor-pointer underline">
-                                CMS Online (VPN){{if gt .AssetCountVPN 0}} ({{.AssetCountVPN}}){{end}}
-                            </a>
-                            {{else if eq .CMSStatusVPN "CMS Offline"}}
-                            <button class="text-red-400 hover:text-red-300 cursor-pointer underline"
-                                    hx-post="/api/hosts/reboot"
-                                    hx-vals='{"target_ip":"{{.VPNIPAddress}}"}'
-                                    hx-confirm="Reboot host {{.VPNIPAddress}}? This will stop Docker and restart the system."
-                                    hx-swap="none">
-                                CMS Offline (VPN)
-                            </button>
-                            {{else}}
-                            <span class="text-gray-500">CMS Unknown (VPN)</span>
-                            {{end}}
-                        </div>
-                        {{end}}
-                    </div>
-                </td>
-                <td class="px-4 py-2 align-top">
-                    <div class="notes-display whitespace-pre-wrap {{if .Notes}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
-                        {{if .Notes}}{{.Notes}}{{else}}—{{end}}
-                    </div>
-                    <textarea class="notes-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full" rows="2" placeholder="Optional notes">{{.Notes}}</textarea>
-                </td>
-                <td class="px-4 py-2 align-top text-right">
-                    <div class="flex justify-end items-center gap-3">
-                        {{if eq .CMSStatus "CMS Online"}}
-                        <button class="info-btn text-blue-400 hover:text-blue-300 text-lg" title="Info" onclick="toggleInfo(this, '{{.IPAddress}}')">ℹ️</button>
-                        {{end}}
-                        <button class="edit-btn text-desert-cyan hover:text-desert-yellow text-lg" title="Edit" onclick="enterEditMode(this)">✏️</button>
-                        <button class="save-btn hidden text-green-400 hover:text-green-300 text-lg font-bold" title="Save" onclick="saveEdit(this)">✓</button>
-                        <button class="cancel-btn hidden text-red-400 hover:text-red-300 text-lg font-bold" title="Cancel" onclick="cancelEdit(this)">✗</button>
-                        <button
-                            class="text-red-400 hover:text-red-300"
-                            title="Delete"
-                            hx-post="/api/hosts/delete?ip={{.IPAddress}}"
-                            hx-confirm="Delete host {{.IPAddress}}?"
-                            hx-target="closest tr"
-                            hx-swap="outerHTML swap:1s">🗑️</button>
-                    </div>
-                </td>
-            </tr>
-            {{end}}
-        </tbody>
+        {{template "host-rows" .}}
     </table>
 
     <div class="mt-4 p-3 bg-desert-gray rounded">
@@ -245,8 +42,6 @@
             <button type="submit" class="text-desert-darkgray bg-desert-cyan hover:bg-desert-yellow px-3 py-1 rounded text-sm">Add</button>
         </form>
     </div>
-
-    {{/* Push controls moved above */}}
 </div>
 
 <script>
@@ -259,157 +54,6 @@ function validateIPv4(value) {
     }
     return ipv4Pattern.test(value);
 }
-
-if (typeof window.countdownValue === 'undefined') {
-    window.countdownValue = 10;
-    window.countdownInterval = null;
-    window.isCheckingInProgress = false;
-}
-
-window.isAnyRecordInEditMode = function() {
-    const editButtons = document.querySelectorAll('.save-btn:not(.hidden)');
-    return editButtons.length > 0;
-};
-
-window.isUserInFormField = function() {
-    const activeElement = document.activeElement;
-    if (!activeElement) return false;
-    const tagName = activeElement.tagName.toLowerCase();
-    return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
-};
-
-window.triggerHostsRefresh = function() {
-    if (!window.isAnyRecordInEditMode()) {
-        htmx.trigger('#host-list-container', 'refreshHosts');
-    }
-};
-
-window.updateCountdownDisplay = function() {
-    const container = document.getElementById('countdown-container');
-    if (!container) return;
-
-    const inEditMode = window.isAnyRecordInEditMode();
-    const inFormField = window.isUserInFormField();
-
-    if (inEditMode || inFormField) {
-        container.innerHTML = '<span class="text-orange-400 italic">editing...</span>';
-    } else if (window.isCheckingInProgress) {
-        container.innerHTML = '<span class="text-cyan-400 italic">checking...</span>';
-    } else {
-        container.innerHTML = '<span id="countdown" class="font-bold text-desert-cyan">' + window.countdownValue + '</span>s';
-    }
-};
-
-window.checkAllHostsWithSSE = function() {
-    window.isCheckingInProgress = true;
-    window.updateCountdownDisplay();
-    window.resetCountdown();
-
-    document.querySelectorAll('.checking-indicator').forEach(el => {
-        el.classList.add('invisible');
-    });
-
-    fetch('/api/hosts/check-stream', {
-        method: 'POST',
-        headers: {
-            'Accept': 'text/event-stream',
-        }
-    }).then(response => {
-        if (!response.ok) {
-            throw new Error('HTTP error');
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        function readStream() {
-            reader.read().then(({done, value}) => {
-                if (done) {
-                    window.isCheckingInProgress = false;
-                    window.updateCountdownDisplay();
-                    setTimeout(() => {
-                        window.triggerHostsRefresh();
-                    }, 500);
-                    return;
-                }
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                lines.forEach(line => {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.substring(6));
-                            if (data.status === 'checking') {
-                                const row = document.querySelector(`tr[data-ip="${data.ip}"]`);
-                                if (row) {
-                                    const indicator = row.querySelector('.checking-indicator');
-                                    if (indicator) {
-                                        indicator.classList.remove('invisible');
-                                    }
-                                }
-                            } else if (data.status === 'complete') {
-                                const row = document.querySelector(`tr[data-ip="${data.ip}"]`);
-                                if (row) {
-                                    const indicator = row.querySelector('.checking-indicator');
-                                    if (indicator) {
-                                        indicator.classList.add('invisible');
-                                    }
-                                }
-                            } else if (data.status === 'done') {
-                                window.isCheckingInProgress = false;
-                                window.updateCountdownDisplay();
-                            }
-                        } catch (e) {
-                            // Ignore JSON parse errors
-                        }
-                    }
-                });
-
-                readStream();
-            }).catch(() => {
-                window.isCheckingInProgress = false;
-                window.updateCountdownDisplay();
-            });
-        }
-
-        readStream();
-    }).catch(() => {
-        window.isCheckingInProgress = false;
-        window.updateCountdownDisplay();
-    });
-};
-
-window.startCountdown = function() {
-    if (window.countdownInterval) {
-        clearInterval(window.countdownInterval);
-    }
-
-    window.updateCountdownDisplay();
-
-    window.countdownInterval = setInterval(() => {
-        const inEditMode = window.isAnyRecordInEditMode();
-        const inFormField = window.isUserInFormField();
-
-        if (inEditMode || inFormField || window.isCheckingInProgress) {
-            window.updateCountdownDisplay();
-            return;
-        }
-
-        window.countdownValue--;
-        window.updateCountdownDisplay();
-
-        if (window.countdownValue <= 0) {
-            window.checkAllHostsWithSSE();
-            window.resetCountdown();
-        }
-    }, 1000);
-};
-
-window.resetCountdown = function() {
-    window.countdownValue = 10;
-    window.updateCountdownDisplay();
-};
 
 window.toggleSelectAll = function(cb) {
     document.querySelectorAll('.row-select').forEach(el => el.checked = cb.checked);
@@ -438,13 +82,13 @@ window.pushSelected = function() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targets })
     }).then(() => {
-        setTimeout(() => window.triggerHostsRefresh(), 500);
+        // No need to trigger refresh, SSE will handle it if state changes
     }).catch(() => {});
 }
 
 window.pushAll = function() {
     fetch('/api/hosts/push', { method: 'POST' }).then(() => {
-        setTimeout(() => window.triggerHostsRefresh(), 500);
+        // No need to trigger refresh
     }).catch(() => {});
 }
 
@@ -503,8 +147,6 @@ window.enterEditMode = function(button) {
     if (lanInput) {
         lanInput.focus();
     }
-
-    window.resetCountdown();
 };
 
 window.cancelEdit = function(button) {
@@ -545,21 +187,15 @@ window.cancelEdit = function(button) {
     row.querySelector('.edit-btn').classList.remove('hidden');
     row.querySelector('.save-btn').classList.add('hidden');
     row.querySelector('.cancel-btn').classList.add('hidden');
-
-    window.resetCountdown();
 };
 
 window.saveEdit = function(button) {
     const row = button.closest('tr');
     const oldIP = row.dataset.ip;
 
-    const nicknameDisplay = row.querySelector('.nickname-display');
     const nicknameInput = row.querySelector('.nickname-edit');
-    const lanDisplay = row.querySelector('.ip-lan-display');
     const lanInput = row.querySelector('.lan-ip-edit');
-    const vpnDisplay = row.querySelector('.vpn-ip-display');
     const vpnInput = row.querySelector('.vpn-ip-edit');
-    const notesDisplay = row.querySelector('.notes-display');
     const notesInput = row.querySelector('.notes-edit');
 
     const nickname = nicknameInput ? nicknameInput.value.trim() : '';
@@ -591,76 +227,7 @@ window.saveEdit = function(button) {
         if (!resp.ok) {
             throw new Error('update failed');
         }
-
-        row.dataset.ip = newIP;
-        row.dataset.vpn = newVPN;
-
-        const hostname = row.dataset.hostname || '';
-
-        if (nicknameDisplay) {
-            if (nickname) {
-                nicknameDisplay.innerHTML = `${nickname}${hostname ? ` <span class="text-desert-gray text-xs">(${hostname})</span>` : ''}`;
-            } else if (hostname) {
-                nicknameDisplay.innerHTML = `<span class="text-desert-gray italic">unnamed</span> <span class="text-desert-gray text-xs">(${hostname})</span>`;
-            } else {
-                nicknameDisplay.innerHTML = '<span class="text-desert-gray italic">unnamed</span>';
-            }
-            nicknameDisplay.classList.remove('hidden');
-        }
-
-        if (nicknameInput) {
-            nicknameInput.classList.add('hidden');
-        }
-
-        if (lanDisplay) {
-            lanDisplay.innerHTML = `${newIP}<span class="checking-indicator invisible text-orange-400 italic text-xs ml-2">(checking)</span>`;
-            lanDisplay.classList.remove('hidden');
-        }
-        if (lanInput) {
-            lanInput.classList.add('hidden');
-        }
-
-        if (vpnDisplay) {
-            if (newVPN) {
-                vpnDisplay.textContent = newVPN;
-                vpnDisplay.classList.remove('text-desert-gray', 'italic');
-                vpnDisplay.classList.add('text-desert-tan');
-            } else {
-                vpnDisplay.textContent = '—';
-                vpnDisplay.classList.remove('text-desert-tan');
-                vpnDisplay.classList.add('text-desert-gray', 'italic');
-            }
-            vpnDisplay.classList.remove('hidden');
-        }
-        if (vpnInput) {
-            vpnInput.classList.add('hidden');
-        }
-
-        if (notesDisplay) {
-            if (notes) {
-                notesDisplay.textContent = notes;
-                notesDisplay.classList.remove('text-desert-gray', 'italic');
-                notesDisplay.classList.add('text-desert-tan');
-            } else {
-                notesDisplay.textContent = '—';
-                notesDisplay.classList.remove('text-desert-tan');
-                notesDisplay.classList.add('text-desert-gray', 'italic');
-            }
-            notesDisplay.classList.remove('hidden');
-        }
-        if (notesInput) {
-            notesInput.classList.add('hidden');
-        }
-
-        row.querySelector('.edit-btn').classList.remove('hidden');
-        row.querySelector('.save-btn').classList.add('hidden');
-        row.querySelector('.cancel-btn').classList.add('hidden');
-
-        window.resetCountdown();
-
-        setTimeout(() => {
-            window.triggerHostsRefresh();
-        }, 500);
+        // SSE will update the row
     }).catch(() => {
         alert('Failed to update host. Please try again.');
     });
@@ -709,8 +276,6 @@ window.addHost = function(event) {
         notesInput.value = '';
 
         lanInput.blur();
-
-        window.triggerHostsRefresh();
     }).catch(() => {
         alert('Failed to add host. Please try again.');
     });
@@ -821,47 +386,5 @@ window.toggleInfo = function(button, ip) {
         infoCell.innerHTML = '<div class="text-red-400 text-sm">Error fetching device information.</div>';
     });
 };
-
-if (!window.countdownStarted) {
-    window.countdownStarted = true;
-    document.addEventListener('DOMContentLoaded', function() {
-        window.startCountdown();
-    });
-    window.startCountdown();
-}
-
-if (typeof window.infoRowState === 'undefined') {
-    window.infoRowState = null;
-}
-
-document.body.addEventListener('htmx:beforeSwap', function() {
-    const infoRow = document.querySelector('.info-row');
-    if (infoRow) {
-        window.infoRowState = {
-            ip: infoRow.dataset.ip,
-            html: infoRow.querySelector('td').innerHTML
-        };
-    } else {
-        window.infoRowState = null;
-    }
-});
-
-document.body.addEventListener('htmx:afterSwap', function() {
-    if (window.infoRowState && window.infoRowState.ip) {
-        const hostRow = document.querySelector(`tr[data-ip="${window.infoRowState.ip}"]`);
-        if (hostRow) {
-            const infoRow = document.createElement('tr');
-            infoRow.className = 'info-row bg-black';
-            infoRow.dataset.ip = window.infoRowState.ip;
-
-            const infoCell = document.createElement('td');
-            infoCell.colSpan = HOST_TABLE_COLUMN_COUNT;
-            infoCell.className = 'px-4 py-4';
-            infoCell.innerHTML = window.infoRowState.html;
-
-            infoRow.appendChild(infoCell);
-            hostRow.after(infoRow);
-        }
-    }
-});
 </script>
+

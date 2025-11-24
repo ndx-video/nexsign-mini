@@ -5,6 +5,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"nexsign.mini/nsm/internal/anthias"
+	"nexsign.mini/nsm/internal/discovery"
 	"nexsign.mini/nsm/internal/hosts"
 	"nexsign.mini/nsm/internal/types"
 )
@@ -73,11 +75,12 @@ func (s *Server) Start() <-chan error {
 	mux.HandleFunc("/api/hosts/update", s.handleUpdateHost)
 	mux.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
 	mux.HandleFunc("/api/hosts/check", s.handleCheckHosts)
-	mux.HandleFunc("/api/hosts/check-stream", s.handleCheckHostsStream)
+	mux.HandleFunc("/api/hosts/stream", s.handleHostsStream)
 	mux.HandleFunc("/api/hosts/push", s.handlePushHosts)
 	mux.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
 	mux.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
 	mux.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
+	mux.HandleFunc("/api/discovery/scan", s.handleDiscoveryScan)
 	mux.HandleFunc("/api/proxy/anthias", s.handleAnthiasProxy)
 
 	addr := fmt.Sprintf(":%d", s.port)
@@ -356,25 +359,15 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 
 // handleCheckHosts triggers health check on all hosts
 func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+	// Datastar action can be a GET or POST.
+	// If triggered via @post('/api/hosts/check'), it expects a response.
+	// We can just return 204 No Content or empty body, as the update will come via SSE.
 	go s.store.CheckAllHosts()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "checking"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleCheckHostsStream streams health check progress via Server-Sent Events
-func (s *Server) handleCheckHostsStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Set headers for SSE
+// handleHostsStream streams host list updates via Server-Sent Events for Datastar
+func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -385,59 +378,78 @@ func (s *Server) handleCheckHostsStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	hostList := s.store.GetAll()
-
-	// Send checking event for each host
-	for i := range hostList {
-		// Send start event
-		data, _ := json.Marshal(map[string]interface{}{
-			"ip":     hostList[i].IPAddress,
-			"status": "checking",
-		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-
-		// Perform health check
-		hosts.CheckHealth(&hostList[i])
-
-		// Wait 1 second before sending complete event so indicator is visible
-		time.Sleep(1 * time.Second)
-
-		// Send complete event
-		complete := map[string]interface{}{
-			"ip":       hostList[i].IPAddress,
-			"status":   "complete",
-			"nickname": hostList[i].Nickname,
-			"hostname": hostList[i].Hostname,
-			"lan": map[string]interface{}{
-				"status":       hostList[i].Status,
-				"cms_status":   hostList[i].CMSStatus,
-				"asset_count":  hostList[i].AssetCount,
-				"last_checked": hostList[i].LastChecked,
-			},
+	// Helper to render and send the host list
+	sendUpdate := func() error {
+		// Get current host IP
+		currentIP := ""
+		if localHost, err := s.anthias.GetMetadata(); err == nil {
+			currentIP = localHost.IPAddress
 		}
 
-		if hostList[i].VPNIPAddress != "" {
-			complete["vpn"] = map[string]interface{}{
-				"ip":           hostList[i].VPNIPAddress,
-				"status":       hostList[i].StatusVPN,
-				"cms_status":   hostList[i].CMSStatusVPN,
-				"asset_count":  hostList[i].AssetCountVPN,
-				"last_checked": hostList[i].LastCheckedVPN,
+		data := TemplateData{
+			Hosts:          s.store.GetAll(),
+			CurrentHostIP:  currentIP,
+			CurrentVersion: types.Version,
+		}
+
+		var buf bytes.Buffer
+		if err := s.templates.ExecuteTemplate(&buf, "host-rows", data); err != nil {
+			return err
+		}
+
+		// Send datastar-patch-elements event
+		// We need to wrap the content in `data: elements ...`
+		// Datastar expects:
+		// event: datastar-patch-elements
+		// data: elements <fragment>...
+		
+		fmt.Fprintf(w, "event: datastar-patch-elements\n")
+		
+		// Split by line to prefix with "data: elements "
+		// Or just send one line if possible, but HTML has newlines.
+		// Datastar spec: "data: elements " followed by content.
+		// If content has newlines, each line must be prefixed?
+		// Actually, the example shows:
+		// data: elements <div id="hal">
+		// data: elements     I’m sorry...
+		
+		lines := strings.Split(buf.String(), "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
 			}
+			fmt.Fprintf(w, "data: elements %s\n", line)
 		}
-
-		data, _ = json.Marshal(complete)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		fmt.Fprintf(w, "\n")
 		flusher.Flush()
+		return nil
 	}
 
-	// Save updated hosts
-	s.store.ReplaceAll(hostList)
+	// Send initial state
+	if err := sendUpdate(); err != nil {
+		log.Printf("Error sending initial SSE update: %v", err)
+		return
+	}
 
-	// Send done event
-	fmt.Fprintf(w, "data: {\"status\":\"done\"}\n\n")
-	flusher.Flush()
+	updates := s.store.Updates()
+	ticker := time.NewTicker(30 * time.Second) // Keep-alive / periodic refresh
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-updates:
+			if err := sendUpdate(); err != nil {
+				log.Printf("Error sending SSE update: %v", err)
+				return
+			}
+		case <-ticker.C:
+			// Optional: send a comment or empty event to keep connection alive
+			fmt.Fprintf(w, ": keep-alive\n\n")
+			flusher.Flush()
+		}
+	}
 }
 
 // handlePushHosts pushes the current host list to all other hosts
@@ -714,6 +726,71 @@ func (s *Server) handleUpgradeHost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// handleDiscoveryScan initiates a network scan for other NSM instances
+func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go func() {
+		log.Println("Starting network discovery scan...")
+		scanner := discovery.NewScanner(s.port)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		results, err := scanner.Scan(ctx)
+		if err != nil {
+			log.Printf("Discovery scan failed: %v", err)
+			return
+		}
+
+		count := 0
+		for host := range results {
+			// Check if host exists
+			if _, err := s.store.GetByIP(host.IP); err == nil {
+				continue // Already exists
+			}
+
+			// Add new host
+			newHost := types.Host{
+				Nickname:      "Discovered Host",
+				IPAddress:     host.IP,
+				Status:        types.StatusUnreachable,
+				NSMStatus:     "NSM Offline",
+				NSMVersion:    "unknown",
+				CMSStatus:     types.CMSUnknown,
+				DashboardURL:  fmt.Sprintf("http://%s:%d", host.IP, host.Port),
+				LastChecked:   time.Time{},
+			}
+
+			if err := s.store.Add(newHost); err != nil {
+				log.Printf("Failed to add discovered host %s: %v", host.IP, err)
+				continue
+			}
+			count++
+			log.Printf("Discovered and added new host: %s", host.IP)
+
+			// Check health of new host
+			go func(base types.Host) {
+				updated := base
+				hosts.CheckHealth(&updated)
+				if err := s.store.Update(base.IPAddress, func(h *types.Host) {
+					copyNetworkState(h, &updated)
+					if updated.Hostname != "" {
+						h.Hostname = updated.Hostname
+					}
+				}); err != nil {
+					log.Printf("Error persisting host health for %s: %v", base.IPAddress, err)
+				}
+			}(newHost)
+		}
+		log.Printf("Discovery scan complete. Added %d new hosts.", count)
+	}()
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleAnthiasProxy proxies requests to Anthias devices to avoid CORS issues.
