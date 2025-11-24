@@ -15,22 +15,25 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"nexsign.mini/nsm/internal/anthias"
 	"nexsign.mini/nsm/internal/discovery"
 	"nexsign.mini/nsm/internal/hosts"
+	"nexsign.mini/nsm/internal/logger"
 	"nexsign.mini/nsm/internal/types"
 )
 
 // TemplateData holds the data to be passed to the HTML template.
 type TemplateData struct {
-	Hosts          []types.Host
-	SelectedHost   *types.Host
-	CurrentHostIP  string
-	CurrentVersion string
-	Interfaces     []string
+	Hosts              []types.Host
+	SelectedHost       *types.Host
+	CurrentHostIP      string
+	CurrentVersion     string
+	BuildTime          string
+	Interfaces         []string
 	EnvVarSet          bool
 	DuplicateHostnames map[string]bool
 }
@@ -41,6 +44,7 @@ type Server struct {
 	anthias   *anthias.Client
 	port      int
 	templates *template.Template
+	logger    *logger.Logger
 }
 
 // NewServer creates a new web server.
@@ -55,8 +59,18 @@ func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Se
 		anthias:   anthiasClient,
 		port:      port,
 		templates: templates,
+		logger:    logger.New(200), // Keep last 200 messages
 	}
+	
+	// Log server initialization
+	s.logger.Info("NSM server initialized")
+	
 	return s, nil
+}
+
+// Logger returns the server's logger instance
+func (s *Server) Logger() *logger.Logger {
+	return s.logger
 }
 
 // Start initializes and runs the web server.
@@ -71,6 +85,7 @@ func (s *Server) Start() <-chan error {
 	mux.HandleFunc("/", s.handlePageLoad)
 	mux.HandleFunc("/views/home", s.handleHomeView)
 	mux.HandleFunc("/views/advanced", s.handleAdvancedView)
+	mux.HandleFunc("/views/api", s.handleAPIView)
 
 	// API routes
 	mux.HandleFunc("/api/health", s.handleHealth)
@@ -87,8 +102,18 @@ func (s *Server) Start() <-chan error {
 	mux.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
 	mux.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
 	mux.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
+	mux.HandleFunc("/api/hosts/export/internal", s.handleExportInternal)
+	mux.HandleFunc("/api/hosts/export/download", s.handleExportDownload)
+	mux.HandleFunc("/api/hosts/import/internal", s.handleImportInternal)
+	mux.HandleFunc("/api/hosts/import/upload", s.handleImportUpload)
+	mux.HandleFunc("/api/backups/list", s.handleListBackups)
+	mux.HandleFunc("/api/backups/restore", s.handleRestoreBackup)
 	mux.HandleFunc("/api/discovery/scan", s.handleDiscoveryScan)
 	mux.HandleFunc("/api/proxy/anthias", s.handleAnthiasProxy)
+	
+	// WebSocket routes
+	mux.HandleFunc("/ws/diagnostics", s.handleDiagnosticsWS)
+	mux.HandleFunc("/ws/status", s.handleStatusWS)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	errCh := make(chan error, 1)
@@ -106,7 +131,10 @@ func (s *Server) handlePageLoad(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setCacheHeaders(w)
 	// Pass current version so layout can display it in the header
-	err := s.templates.ExecuteTemplate(w, "layout.html", TemplateData{CurrentVersion: types.Version})
+	err := s.templates.ExecuteTemplate(w, "layout.html", TemplateData{
+		CurrentVersion: types.Version,
+		BuildTime:      types.BuildTime,
+	})
 	if err != nil {
 		log.Printf("Error executing layout template: %s", err)
 		http.Error(w, "Failed to render page", http.StatusInternalServerError)
@@ -202,18 +230,58 @@ func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	
-	html := `<div id="content-area" class="p-4 text-desert-tan">
-		<h2 class="text-xl font-semibold mb-3">Advanced Settings</h2>
-		<p class="text-desert-gray">Not implemented yet.</p>
-	</div>`
+	s.setCacheHeaders(w)
+
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "advanced-view.html", TemplateData{
+		CurrentVersion: types.Version,
+		BuildTime:      types.BuildTime,
+	}); err != nil {
+		log.Printf("Error executing advanced-view template: %s", err)
+		http.Error(w, "Failed to render view", http.StatusInternalServerError)
+		return
+	}
 
 	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
-	lines := strings.Split(html, "\n")
+	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
+	
+	lines := strings.Split(buf.String(), "\n")
 	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		fmt.Fprintf(w, "data: fragments %s\n", line)
 	}
-	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "data: fragments </div>\n\n")
+}
+
+func (s *Server) handleAPIView(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	s.setCacheHeaders(w)
+
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "api-view.html", TemplateData{
+		CurrentVersion: types.Version,
+		BuildTime:      types.BuildTime,
+	}); err != nil {
+		log.Printf("Error executing api-view template: %s", err)
+		http.Error(w, "Failed to render view", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
+	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
+	
+	lines := strings.Split(buf.String(), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fmt.Fprintf(w, "data: fragments %s\n", line)
+	}
+	fmt.Fprintf(w, "data: fragments </div>\n\n")
 }
 
 // Health check endpoint
@@ -327,9 +395,12 @@ func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.store.Add(host); err != nil {
 		log.Printf("Error adding host: %s", err)
+		s.logger.Error(fmt.Sprintf("Failed to add host %s: %v", ip, err))
 		http.Error(w, "Failed to add host", http.StatusInternalServerError)
 		return
 	}
+
+	s.logger.Info(fmt.Sprintf("Added new host: %s (%s)", ip, nickname))
 
 	// Check health of new host
 	go func(base types.Host) {
@@ -428,9 +499,12 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("Error updating host: %s", err)
+		s.logger.Error(fmt.Sprintf("Failed to update host %s: %v", updateReq.OldIP, err))
 		http.Error(w, "Failed to update host", http.StatusInternalServerError)
 		return
 	}
+
+	s.logger.Info(fmt.Sprintf("Updated host: %s -> %s", updateReq.OldIP, newIP))
 
 	if updatedHost, getErr := s.store.GetByIP(newIP); getErr == nil {
 		go func(toRefresh *types.Host) {
@@ -465,9 +539,12 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.store.Delete(ip); err != nil {
 		log.Printf("Error deleting host: %s", err)
+		s.logger.Error(fmt.Sprintf("Failed to delete host %s: %v", ip, err))
 		http.Error(w, "Failed to delete host", http.StatusNotFound)
 		return
 	}
+
+	s.logger.Info(fmt.Sprintf("Deleted host: %s", ip))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -931,14 +1008,14 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		log.Println("Starting network discovery scan...")
-		scanner := discovery.NewScanner(s.port, overrideIP)
+		s.logger.Info("Starting network discovery scan...")
+		scanner := discovery.NewScanner(s.port, overrideIP, s.logger)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		results, err := scanner.Scan(ctx)
 		if err != nil {
-			log.Printf("Discovery scan failed: %v", err)
+			s.logger.Error(fmt.Sprintf("Discovery scan failed: %v", err))
 			return
 		}
 
@@ -957,14 +1034,14 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 					
 					// Check for stale entries with same IP but different ID
 					if oldHost, err := s.store.GetByIP(host.IP); err == nil && oldHost.ID != remoteHost.ID {
-						log.Printf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteHost.ID)
+						s.logger.Warning(fmt.Sprintf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteHost.ID))
 						s.store.Delete(oldHost.IPAddress)
 					}
 
 					if err := s.store.Upsert(remoteHost); err != nil {
-						log.Printf("Failed to upsert discovered host: %v", err)
+						s.logger.Error(fmt.Sprintf("Failed to upsert discovered host: %v", err))
 					} else {
-						log.Printf("Discovered and updated host: %s (ID: %s)", host.IP, remoteHost.ID)
+						s.logger.Info(fmt.Sprintf("Discovered and updated host: %s (ID: %s)", host.IP, remoteHost.ID))
 					}
                     
                     // Mutual discovery: Push ourselves to them
@@ -1012,7 +1089,7 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 				if existing, err := s.store.GetByID(remoteID); err == nil {
 					// Host exists, update IP if changed
 					if existing.IPAddress != host.IP {
-						log.Printf("Host %s moved from %s to %s", remoteID, existing.IPAddress, host.IP)
+						s.logger.Info(fmt.Sprintf("Host %s moved from %s to %s", remoteID, existing.IPAddress, host.IP))
 						existing.IPAddress = host.IP
 						existing.DashboardURL = fmt.Sprintf("http://%s:%d", host.IP, host.Port)
 						existing.Status = types.StatusUnreachable // Reset status
@@ -1030,9 +1107,9 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 					// ID not found in DB. Check if we have a stale host with this IP.
 					if oldHost, err := s.store.GetByIP(host.IP); err == nil {
 						// We have a host at this IP, but with a different ID (since GetByID failed).
-						log.Printf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteID)
+						s.logger.Warning(fmt.Sprintf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteID))
 						if err := s.store.Delete(oldHost.IPAddress); err != nil {
-							log.Printf("Failed to delete stale host: %v", err)
+							s.logger.Error(fmt.Sprintf("Failed to delete stale host: %v", err))
 						}
 					}
 				}
@@ -1057,25 +1134,319 @@ func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if err := s.store.Upsert(newHost); err != nil {
-				log.Printf("Failed to add discovered host %s: %v", host.IP, err)
+				s.logger.Error(fmt.Sprintf("Failed to add discovered host %s: %v", host.IP, err))
 				continue
 			}
 			count++
-			log.Printf("Discovered and added new host: %s (ID: %s)", host.IP, remoteID)
+			s.logger.Info(fmt.Sprintf("Discovered and added new host: %s (ID: %s)", host.IP, remoteID))
 
 			// Check health of new host
 			go func(base types.Host) {
 				updated := base
 				hosts.CheckHealth(&updated)
 				if err := s.store.Upsert(updated); err != nil {
-					log.Printf("Error refreshing host %s after update: %v", updated.IPAddress, err)
+					s.logger.Error(fmt.Sprintf("Error refreshing host %s after update: %v", updated.IPAddress, err))
 				}
 			}(newHost)
 		}
-		log.Printf("Discovery scan complete. Added %d new hosts.", count)
+		s.logger.Info(fmt.Sprintf("Discovery scan complete. Added %d new hosts.", count))
 	}()
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleExportInternal saves the current host list to internal storage
+func (s *Server) handleExportInternal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	backupPath, err := s.store.BackupCurrent(100) // Keep up to 100 backups
+	if err != nil {
+		log.Printf("Failed to create internal backup: %v", err)
+		http.Error(w, "Failed to save internal backup", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Created internal backup at: %s", backupPath)
+	s.logger.Info(fmt.Sprintf("Created internal backup at: %s", backupPath))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"path":   backupPath,
+	})
+}
+
+// handleExportDownload returns the current host list as a downloadable JSON file
+func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
+	allHosts := s.store.GetAll()
+	
+	hostListJSON, err := json.MarshalIndent(allHosts, "", "  ")
+	if err != nil {
+		http.Error(w, "Failed to marshal host list", http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("nsm-hosts-%s.json", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Write(hostListJSON)
+}
+
+// handleImportInternal restores the host list from the most recent internal backup
+func (s *Server) handleImportInternal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Find the most recent backup
+	backupDir := "backups"
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		log.Printf("Failed to read backup directory: %v", err)
+		http.Error(w, "No backups found", http.StatusNotFound)
+		return
+	}
+
+	var latestBackup string
+	var latestTime time.Time
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		
+		name := entry.Name()
+		if !strings.HasPrefix(name, "hosts-") && !strings.HasPrefix(name, "hosts.") {
+			continue
+		}
+		
+		// Accept both .db and .json backup files
+		ext := filepath.Ext(name)
+		if ext != ".db" && ext != ".json" {
+			continue
+		}
+		
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		
+		if info.ModTime().After(latestTime) {
+			latestTime = info.ModTime()
+			latestBackup = name
+		}
+	}
+
+	if latestBackup == "" {
+		http.Error(w, "No backups found", http.StatusNotFound)
+		return
+	}
+
+	backupPath := fmt.Sprintf("%s/%s", backupDir, latestBackup)
+	
+	// Read the backup file
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		log.Printf("Failed to read backup file: %v", err)
+		http.Error(w, "Failed to read backup", http.StatusInternalServerError)
+		return
+	}
+
+	// Create a backup of current state before restoring
+	if _, err := s.store.BackupCurrent(100); err != nil {
+		log.Printf("Warning: Failed to backup current state before restore: %v", err)
+	}
+
+	// Check if it's a .db or .json file
+	if strings.HasSuffix(latestBackup, ".db") {
+		// It's a SQLite database backup - use ImportSnapshot
+		if _, err := s.store.ImportSnapshot(data, 100); err != nil {
+			log.Printf("Failed to restore database backup: %v", err)
+			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// It's a JSON backup - parse and replace
+		var hosts []types.Host
+		if err := json.Unmarshal(data, &hosts); err != nil {
+			log.Printf("Failed to unmarshal backup: %v", err)
+			http.Error(w, "Invalid backup file", http.StatusInternalServerError)
+			return
+		}
+		if err := s.store.ReplaceAll(hosts); err != nil {
+			log.Printf("Failed to restore host list: %v", err)
+			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	log.Printf("Restored host list from %s", backupPath)
+	s.logger.Info(fmt.Sprintf("Restored host list from %s", latestBackup))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"source": latestBackup,
+	})
+}
+
+// handleImportUpload accepts an uploaded JSON file and replaces the host list
+func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var hosts []types.Host
+	if err := json.NewDecoder(r.Body).Decode(&hosts); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Create a backup of current state before importing
+	backupPath, err := s.store.BackupCurrent(100)
+	if err != nil {
+		log.Printf("Warning: Failed to backup current state before import: %v", err)
+	} else {
+		log.Printf("Created backup at %s before import", backupPath)
+	}
+
+	// Replace the host list
+	if err := s.store.ReplaceAll(hosts); err != nil {
+		log.Printf("Failed to import host list: %v", err)
+		http.Error(w, "Failed to import host list", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Imported host list from upload (%d hosts)", len(hosts))
+	s.logger.Info(fmt.Sprintf("Imported host list from upload (%d hosts)", len(hosts)))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"count":  len(hosts),
+	})
+}
+
+// handleListBackups returns a list of all available backup files
+func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
+	backupDir := "backups"
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		http.Error(w, "Failed to read backup directory", http.StatusInternalServerError)
+		return
+	}
+
+	type BackupInfo struct {
+		Filename  string `json:"filename"`
+		Timestamp string `json:"timestamp"`
+		Size      int64  `json:"size"`
+	}
+
+	var backups []BackupInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		
+		name := entry.Name()
+		if !strings.HasPrefix(name, "hosts-") && !strings.HasPrefix(name, "hosts.") {
+			continue
+		}
+		
+		// Accept both .db and .json backup files
+		ext := filepath.Ext(name)
+		if ext != ".db" && ext != ".json" {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		backups = append(backups, BackupInfo{
+			Filename:  name,
+			Timestamp: info.ModTime().Format("2006-01-02 15:04:05"),
+			Size:      info.Size(),
+		})
+	}
+
+	// Sort by timestamp descending (newest first)
+	// Since filenames contain timestamp, we can sort by filename in reverse
+	for i, j := 0, len(backups)-1; i < j; i, j = i+1, j-1 {
+		backups[i], backups[j] = backups[j], backups[i]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(backups)
+}
+
+// handleRestoreBackup restores the host list from a specific backup file
+func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	filename := r.URL.Query().Get("file")
+	if filename == "" {
+		http.Error(w, "Missing 'file' parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Validate filename to prevent directory traversal
+	if strings.Contains(filename, "..") || strings.Contains(filename, "/") {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
+	backupPath := fmt.Sprintf("backups/%s", filename)
+
+	// Read the backup file
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		log.Printf("Failed to read backup file: %v", err)
+		http.Error(w, "Failed to read backup", http.StatusNotFound)
+		return
+	}
+
+	// Create a backup of current state before restoring
+	if _, err := s.store.BackupCurrent(100); err != nil {
+		log.Printf("Warning: Failed to backup current state before restore: %v", err)
+	}
+
+	// Check if it's a .db or .json file
+	if strings.HasSuffix(filename, ".db") {
+		// It's a SQLite database backup - use ImportSnapshot
+		if _, err := s.store.ImportSnapshot(data, 100); err != nil {
+			log.Printf("Failed to restore database backup: %v", err)
+			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// It's a JSON backup - parse and replace
+		var hosts []types.Host
+		if err := json.Unmarshal(data, &hosts); err != nil {
+			log.Printf("Failed to unmarshal backup: %v", err)
+			http.Error(w, "Invalid backup file", http.StatusInternalServerError)
+			return
+		}
+		if err := s.store.ReplaceAll(hosts); err != nil {
+			log.Printf("Failed to restore host list: %v", err)
+			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	log.Printf("Restored host list from %s", backupPath)
+	s.logger.Info(fmt.Sprintf("Restored host list from %s", filename))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"source": filename,
+	})
 }
 
 // handleAnthiasProxy proxies requests to Anthias devices to avoid CORS issues.
@@ -1130,6 +1501,111 @@ func (s *Server) handleAnthiasProxy(w http.ResponseWriter, r *http.Request) {
 	// Copy status code and body
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// handleDiagnosticsWS handles WebSocket connections for diagnostics data
+func (s *Server) handleDiagnosticsWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			// Get current time
+			currentTime := time.Now().Format("2006-01-02 15:04:05")
+
+			// Get node ID
+			var nodeID string
+			if meta, err := s.anthias.GetMetadata(); err == nil {
+				nodeID = meta.ID
+			}
+
+			// Get host count
+			hosts := s.store.GetAll()
+			hostCount := len(hosts)
+
+			// Get most recent backup timestamp
+			lastBackup := "none"
+			if backupDir := "backups"; true {
+				if entries, err := os.ReadDir(backupDir); err == nil {
+					var latestTime time.Time
+					for _, entry := range entries {
+						if entry.IsDir() || !strings.HasPrefix(entry.Name(), "hosts.") {
+							continue
+						}
+						if info, err := entry.Info(); err == nil {
+							if info.ModTime().After(latestTime) {
+								latestTime = info.ModTime()
+							}
+						}
+					}
+					if !latestTime.IsZero() {
+						lastBackup = latestTime.Format("2006-01-02 15:04:05")
+					}
+				}
+			}
+
+			// Get recent console logs
+			logs := s.logger.GetAll()
+
+			msg := map[string]interface{}{
+				"time":        currentTime,
+				"node_id":     nodeID,
+				"hosts_count": hostCount,
+				"last_backup": lastBackup,
+				"logs":        logs,
+			}
+
+			if err := conn.WriteJSON(msg); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// handleStatusWS handles WebSocket connections for status bar messages
+func (s *Server) handleStatusWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	lastSent := ""
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			// Get most recent log message
+			recent := s.logger.GetRecent(1)
+			if len(recent) > 0 {
+				msg := recent[0]
+				// Only send if it's different from last sent
+				msgText := msg.Text
+				if msgText != lastSent {
+					if err := conn.WriteJSON(msg); err != nil {
+						return
+					}
+					lastSent = msgText
+				}
+			}
+		}
+	}
 }
 
 // setCacheHeaders sets cache-busting headers to prevent browser caching.

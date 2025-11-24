@@ -1,65 +1,68 @@
 <div class="h-full flex flex-col gap-4">
   <div>
-    <h2 class="text-xl font-semibold text-desert-fg">Advanced Diagnostics</h2>
-    <p class="text-sm text-desert-tan">Live node information and tools. This page uses HTMX for SPA navigation and a WebSocket for realtime updates.</p>
+    <span class="text-base font-semibold text-desert-fg">Advanced Settings </span>
+    <span class="text-sm text-desert-tan">Backup, restore, and diagnostic tools.</span>
   </div>
 
-  <div class="grid md:grid-cols-2 gap-4">
+  <div class="grid md:grid-cols-3 gap-4">
+    <!-- Backup & Restore -->
+    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
+      <h3 class="font-medium mb-3 text-desert-yellow">Backup & Restore <a href="#backup-history" class="text-xs text-desert-cyan hover:text-desert-cyan/80">(history)</a></h3>
+      <div class="space-y-3">
+        <div>
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan" data-on-click="@post('/api/hosts/export/internal');loadBackupHistory()">
+            💾 Save Internal
+          </button>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Save current host list to server storage</p>
+        </div>
+        <div>
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan" onclick="downloadHostList()">
+            ⬇️ Save Download
+          </button>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Download host list as JSON file</p>
+        </div>
+        <div class="border-t border-desert-gray pt-3">
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange" data-on-click="@post('/api/hosts/import/internal')">
+            📂 Use Internal Host List
+          </button>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Restore from server storage</p>
+        </div>
+        <div>
+          <label class="w-full block px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange cursor-pointer">
+            ⬆️ Upload Host List
+            <input type="file" id="upload-host-list" accept=".json" class="hidden" onchange="uploadHostList(this)">
+          </label>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Upload and restore from JSON file</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Live diagnostics card -->
     <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
       <h3 class="font-medium mb-2 text-desert-yellow">Live Node Stats</h3>
       <div id="diag-stats" class="text-sm space-y-1">
         <div><span class="text-desert-tan">Time:</span> <span id="diag-time" class="text-desert-cyan">—</span></div>
-        <div><span class="text-desert-tan">Node ID:</span> <span id="diag-nodeid" class="font-mono text-desert-cyan">—</span></div>
+        <div><span class="text-desert-tan">Node ID:</span> <span id="diag-nodeid" class="font-mono text-desert-cyan text-xs">—</span></div>
         <div><span class="text-desert-tan">Hosts in state:</span> <span id="diag-hosts" class="text-desert-cyan">—</span></div>
+        <div><span class="text-desert-tan">Most recent internal backup:</span> <span id="diag-backup" class="text-desert-cyan text-xs">—</span></div>
         <div><span class="text-desert-tan">WS status:</span> <span id="diag-ws" class="text-desert-yellow">connecting…</span></div>
       </div>
     </div>
 
-    <!-- iFrame tools -->
+    <!-- Console Logs -->
     <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-2 text-desert-yellow">Tools</h3>
-      <div class="text-sm text-desert-tan mb-2">Additional diagnostics content is embedded below:</div>
-      <div class="h-72 border border-desert-gray rounded overflow-hidden">
-        <iframe src="/diagnostics" title="Diagnostics"></iframe>
+      <h3 class="font-medium mb-2 text-desert-yellow">Console Logs</h3>
+      <div id="console-logs" class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
+        <div class="text-desert-gray italic">Waiting for log messages...</div>
+      </div>
+    </div>
+
+    <!-- Backup History -->
+    <div id="backup-history" class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray md:col-span-3">
+      <h3 class="font-medium mb-2 text-desert-yellow">Backup History</h3>
+      <div id="backup-list" class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
+        <div class="text-desert-gray italic">Loading backup history...</div>
       </div>
     </div>
   </div>
-
-  <script>
-    (function(){
-      const wsIndicator = document.getElementById('diag-ws');
-      const tEl = document.getElementById('diag-time');
-      const idEl = document.getElementById('diag-nodeid');
-      const hostsEl = document.getElementById('diag-hosts');
-
-      function connect() {
-        const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
-        const url = proto + '://' + location.host + '/ws/diagnostics';
-        const ws = new WebSocket(url);
-        wsIndicator.textContent = 'connecting…'; wsIndicator.className = 'text-desert-yellow';
-        ws.onopen = () => { wsIndicator.textContent = 'connected'; wsIndicator.className = 'text-desert-green'; };
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.time) tEl.textContent = msg.time;
-            if (msg.node_id) idEl.textContent = msg.node_id;
-            if (typeof msg.hosts_count === 'number') hostsEl.textContent = msg.hosts_count;
-          } catch(e) {}
-        };
-        ws.onclose = () => { wsIndicator.textContent = 'disconnected'; wsIndicator.className = 'text-desert-red'; setTimeout(connect, 1500); };
-        ws.onerror = () => { try { ws.close(); } catch(e) {} };
-      }
-      connect();
-    })();
-  </script>
 </div>
-
-<!-- Breadcrumb update after swap -->
-<script>
-  document.querySelector('.breadcrumbs').innerHTML =
-    `<a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer" hx-get="/views/home" hx-target="#content-area" hx-push-url="/">Home</a>
-     <span class="text-desert-gray">/</span>
-     <span class="text-desert-tan py-2">Advanced</span>`;
-  htmx.process(document.querySelector('.breadcrumbs'));
-  </script>

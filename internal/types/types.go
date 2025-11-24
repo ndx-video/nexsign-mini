@@ -10,6 +10,9 @@ import (
 // Version is the current version of NSM
 const Version = "0.2.0"
 
+// BuildTime is set at build time via -ldflags
+var BuildTime = "dev"
+
 // HostStatus represents the current health/reachability status of a host
 type HostStatus string
 

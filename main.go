@@ -14,6 +14,7 @@ import (
 
 	"nexsign.mini/nsm/internal/anthias"
 	"nexsign.mini/nsm/internal/hosts"
+	"nexsign.mini/nsm/internal/logger"
 	"nexsign.mini/nsm/internal/types"
 	"nexsign.mini/nsm/internal/web"
 )
@@ -43,6 +44,9 @@ func main() {
 		log.Fatalf("Failed to initialize web server: %v", err)
 	}
 
+	// Get logger from server for use in main
+	lg := server.Logger()
+
 	// Start web server
 	serverErrors := server.Start()
 	go func() {
@@ -50,37 +54,37 @@ func main() {
 			log.Fatalf("Web server exited: %v", err)
 		}
 	}()
-	log.Printf("Web dashboard available at http://localhost:%d", port)
+	lg.Info(fmt.Sprintf("Web dashboard available at http://localhost:%d", port))
 
 	// Start background Anthias polling
-	go pollAnthias(store, anthiasClient)
+	go pollAnthias(store, anthiasClient, lg)
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down...")
+	lg.Info("Shutting down...")
 }
 
 // pollAnthias periodically checks local Anthias status and updates localhost entry
-func pollAnthias(store *hosts.Store, client *anthias.Client) {
+func pollAnthias(store *hosts.Store, client *anthias.Client, lg *logger.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	// Do initial check immediately
-	updateLocalHost(store, client)
+	updateLocalHost(store, client, lg)
 
 	for range ticker.C {
-		updateLocalHost(store, client)
+		updateLocalHost(store, client, lg)
 	}
 }
 
 // updateLocalHost updates the localhost entry with current Anthias data
-func updateLocalHost(store *hosts.Store, client *anthias.Client) {
+func updateLocalHost(store *hosts.Store, client *anthias.Client, lg *logger.Logger) {
 	metadata, err := client.GetMetadata()
 	if err != nil {
-		log.Printf("Warning: failed to get Anthias metadata: %v", err)
+		lg.Warning(fmt.Sprintf("Failed to get Anthias metadata: %v", err))
 		return
 	}
 
@@ -109,23 +113,23 @@ func updateLocalHost(store *hosts.Store, client *anthias.Client) {
 		}
 
 		if err := store.Upsert(*metadata); err != nil {
-			log.Printf("Warning: failed to update localhost: %v", err)
+			lg.Warning(fmt.Sprintf("Failed to update localhost: %v", err))
 		}
 	} else {
 		// New ID. Check for hostname conflict.
 		allHosts := store.GetAll()
 		for _, h := range allHosts {
 			if h.Hostname == metadata.Hostname && h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
-				log.Printf("Localhost %s (ID: %s) matches existing host %s (ID: %s). Skipping self-registration.", metadata.Hostname, metadata.ID, h.Hostname, h.ID)
+				// Silently skip self-registration when hostname matches existing host
 				return
 			}
 		}
 
 		// No conflict, add new
 		if err := store.Upsert(*metadata); err != nil {
-			log.Printf("Warning: failed to add localhost: %v", err)
+			lg.Warning(fmt.Sprintf("Failed to add localhost: %v", err))
 		} else {
-			log.Println("Added localhost to host list")
+			lg.Info("Added localhost to host list")
 		}
 	}
 }
@@ -138,6 +142,7 @@ func resolvePort(defaultPort int) int {
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 || port > 65535 {
+		// Keep this as log.Printf since we don't have logger yet
 		log.Printf("Warning: invalid PORT value %q, using %d", portStr, defaultPort)
 		return defaultPort
 	}

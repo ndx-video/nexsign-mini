@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"nexsign.mini/nsm/internal/logger"
 )
 
 // DiscoveredHost represents a potential NSM instance found on the network
@@ -19,13 +21,15 @@ type DiscoveredHost struct {
 type Scanner struct {
 	port       int
 	overrideIP string
+	logger     *logger.Logger
 }
 
 // NewScanner creates a new scanner for the specified port
-func NewScanner(port int, overrideIP string) *Scanner {
+func NewScanner(port int, overrideIP string, lg *logger.Logger) *Scanner {
 	return &Scanner{
 		port:       port,
 		overrideIP: overrideIP,
+		logger:     lg,
 	}
 }
 
@@ -38,14 +42,22 @@ func (s *Scanner) Scan(ctx context.Context) (<-chan DiscoveredHost, error) {
 			defer close(results)
 			ip := net.ParseIP(s.overrideIP)
 			if ip == nil {
-				log.Printf("Invalid override IP: %s", s.overrideIP)
+				if s.logger != nil {
+					s.logger.Warning(fmt.Sprintf("Invalid override IP: %s", s.overrideIP))
+				} else {
+					log.Printf("Invalid override IP: %s", s.overrideIP)
+				}
 				return
 			}
 			// Create /24 subnet around the override IP
 			// We assume /24 is the most common case for this manual override
 			ipv4 := ip.To4()
 			if ipv4 == nil {
-				log.Printf("Override IP must be IPv4: %s", s.overrideIP)
+				if s.logger != nil {
+					s.logger.Warning(fmt.Sprintf("Override IP must be IPv4: %s", s.overrideIP))
+				} else {
+					log.Printf("Override IP must be IPv4: %s", s.overrideIP)
+				}
 				return
 			}
 			
@@ -57,7 +69,11 @@ func (s *Scanner) Scan(ctx context.Context) (<-chan DiscoveredHost, error) {
 			}
 			
 			ipNet := &net.IPNet{IP: networkIP, Mask: mask}
-			log.Printf("Scanning override subnet %s", ipNet.String())
+			if s.logger != nil {
+				s.logger.Info(fmt.Sprintf("Scanning override subnet %s", ipNet.String()))
+			} else {
+				log.Printf("Scanning override subnet %s", ipNet.String())
+			}
 			s.scanSubnet(ctx, ipNet, results)
 		}()
 		return results, nil
@@ -78,7 +94,11 @@ func (s *Scanner) Scan(ctx context.Context) (<-chan DiscoveredHost, error) {
 
 		addrs, err := i.Addrs()
 		if err != nil {
-			log.Printf("Error getting addresses for interface %s: %v", i.Name, err)
+			if s.logger != nil {
+				s.logger.Warning(fmt.Sprintf("Error getting addresses for interface %s: %v", i.Name, err))
+			} else {
+				log.Printf("Error getting addresses for interface %s: %v", i.Name, err)
+			}
 			continue
 		}
 
@@ -106,7 +126,11 @@ func (s *Scanner) Scan(ctx context.Context) (<-chan DiscoveredHost, error) {
 				continue
 			}
 
-			log.Printf("Scanning subnet %s on interface %s", ipNet.String(), i.Name)
+			if s.logger != nil {
+				s.logger.Info(fmt.Sprintf("Scanning subnet %s on interface %s", ipNet.String(), i.Name))
+			} else {
+				log.Printf("Scanning subnet %s on interface %s", ipNet.String(), i.Name)
+			}
 
 			// Scan this subnet
 			wg.Add(1)
@@ -196,7 +220,11 @@ func (s *Scanner) scanSubnet(ctx context.Context, ipNet *net.IPNet, results chan
 			defer func() { <-sem }()
 			
 			if s.checkPort(ctx, targetIP) {
-				log.Printf("Found active host: %s:%d", targetIP, s.port)
+				if s.logger != nil {
+					s.logger.Info(fmt.Sprintf("Found active host: %s:%d", targetIP, s.port))
+				} else {
+					log.Printf("Found active host: %s:%d", targetIP, s.port)
+				}
 				select {
 				case results <- DiscoveredHost{IP: targetIP, Port: s.port}:
 				case <-ctx.Done():

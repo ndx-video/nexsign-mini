@@ -15,7 +15,7 @@
                 value="{{.Nickname}}" placeholder="Friendly label">
         </td>
         <td class="px-4 py-2 align-top">
-            <div class="text-sm text-desert-fg">{{.IPAddress}}</div>
+            <div class="ip-lan-display text-sm text-desert-fg">{{.IPAddress}}</div>
             <div class="text-xs mt-1">
                 <a class="text-blue-400 hover:text-blue-300 underline cursor-pointer"
                     data-on-click="@post('/api/discovery/scan?interface_ip={{.IPAddress}}')">Scan Network</a>

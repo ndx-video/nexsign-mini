@@ -5,10 +5,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>nexSign mini Dashboard</title>
-    <script type="module"
-        src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
-    <!-- Tailwind CSS via CDN (sufficient for dev/test; swap to compiled CSS for prod if needed) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module" src="/static/datastar.js"></script>
+    <!-- Tailwind CSS standalone build -->
+    <script src="/static/tailwind.js"></script>
+    <!-- Application JavaScript -->
+    <script src="/static/app.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -56,22 +57,83 @@
 
     <nav class="w-full bg-desert-darkgray border-b border-desert-gray h-14 px-4 flex items-center justify-between">
         <div class="breadcrumbs flex items-center gap-2 text-sm">
+            <div class="text-lg font-semibold text-desert-cyan inline-flex items-center gap-2">NSM Dashboard </div>
             <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
-                data-on-click="@get('/views/home')">Home</a>
+                data-on-click="@get('/views/home')" onclick="onViewLoad('home')">Home</a>
             <span class="text-desert-gray">/</span>
             <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
-                data-on-click="@get('/views/advanced')">Advanced</a>
+                data-on-click="@get('/views/advanced')" onclick="onViewLoad('advanced')">Advanced</a>
+            <span class="text-desert-gray">/</span>
+            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
+                data-on-click="@get('/views/api')" onclick="onViewLoad('api')">API</a>
         </div>
-        <div class="text-lg font-semibold text-desert-cyan inline-flex items-center gap-2">NSM Dashboard
-            <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}}</span>
+    <!-- Universal status bar for realtime messages -->
+        <div id="status-bar" class="flex items-center gap-3 px-4 py-2">
+            <div class="text-xs text-center space-y-0.5 leading-tight">
+                <div id="status-msg-0" class="text-white"></div>
+                <div id="status-msg-1" class="text-desert-tan/60"></div>
+                <div id="status-msg-2" class="text-desert-gray/40"></div>
+            </div>
         </div>
-        <div class="text-xs text-desert-gray select-none">nexSign mini</div>
+        <div class="text-xs text-desert-gray select-none">nexSign mini <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}} <span class="text-desert-gray/60">(build-ts: {{.BuildTime}})</span></span></div>
     </nav>
+
 
     <!-- This is the main content area that Datastar will update -->
     <div id="content-area" class="flex-1 p-4" data-on-load="@get('/views/home')">
         <!-- Initial content (like a loading spinner) could go here -->
     </div>
+
+    <script>
+        // Status bar message management
+        const statusMessages = ['', '', ''];
+        
+        function updateStatusBar(message) {
+            if (!message) return;
+            
+            // Shift messages down
+            statusMessages.unshift(message);
+            statusMessages.pop();
+            
+            // Update DOM
+            document.getElementById('status-msg-0').textContent = statusMessages[0];
+            document.getElementById('status-msg-1').textContent = statusMessages[1];
+            document.getElementById('status-msg-2').textContent = statusMessages[2];
+        }
+
+        // Connect to status messages WebSocket
+        function connectStatusWS() {
+            const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+            const ws = new WebSocket(proto + '://' + location.host + '/ws/status');
+            
+            ws.onopen = () => {
+                updateStatusBar('Connected to status updates');
+            };
+            
+            ws.onmessage = (ev) => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    if (msg.text) {
+                        updateStatusBar(msg.text);
+                    }
+                } catch(e) {
+                    console.error('Failed to parse status message:', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                updateStatusBar('Disconnected from status updates. Reconnecting...');
+                setTimeout(connectStatusWS, 2000);
+            };
+            
+            ws.onerror = () => {
+                try { ws.close(); } catch(e) {}
+            };
+        }
+        
+        // Start status WebSocket connection
+        connectStatusWS();
+    </script>
 
 </body>
 
