@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"nexsign.mini/nsm/internal/anthias"
@@ -38,13 +39,51 @@ type TemplateData struct {
 	DuplicateHostnames map[string]bool
 }
 
+// sseBroker manages SSE connections for broadcasting host updates
+type sseBroker struct {
+	mu      sync.RWMutex
+	clients map[chan []byte]struct{}
+}
+
+func newSSEBroker() *sseBroker {
+	return &sseBroker{
+		clients: make(map[chan []byte]struct{}),
+	}
+}
+
+func (b *sseBroker) register(client chan []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.clients[client] = struct{}{}
+}
+
+func (b *sseBroker) unregister(client chan []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.clients, client)
+	close(client)
+}
+
+func (b *sseBroker) broadcast(data []byte) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for client := range b.clients {
+		select {
+		case client <- data:
+		default:
+			// Client is slow/blocked, skip
+		}
+	}
+}
+
 // Server is the web server for the dashboard and API.
 type Server struct {
-	store     *hosts.Store
-	anthias   *anthias.Client
-	port      int
-	templates *template.Template
-	logger    *logger.Logger
+	store      *hosts.Store
+	anthias    *anthias.Client
+	port       int
+	templates  *template.Template
+	logger     *logger.Logger
+	sseBroker  *sseBroker
 }
 
 // NewServer creates a new web server.
@@ -60,10 +99,14 @@ func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Se
 		port:      port,
 		templates: templates,
 		logger:    logger.New(200), // Keep last 200 messages
+		sseBroker: newSSEBroker(),
 	}
 	
 	// Log server initialization
 	s.logger.Info("NSM server initialized")
+	
+	// Start listening for host updates and broadcast them via SSE
+	go s.watchHostUpdates()
 	
 	return s, nil
 }
@@ -603,11 +646,80 @@ func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleHostsStream streams host list updates via Server-Sent Events for Datastar
+// watchHostUpdates listens for host changes and broadcasts them to all SSE clients
+func (s *Server) watchHostUpdates() {
+	updates := s.store.Updates()
+	for range updates {
+		// Render the updated host list
+		data := s.renderHostListFragment()
+		if data != nil {
+			s.sseBroker.broadcast(data)
+		}
+	}
+}
+
+// renderHostListFragment creates the SSE-formatted fragment for host list updates
+func (s *Server) renderHostListFragment() []byte {
+	// Get current host IP based on persistent ID
+	currentIP := ""
+	if localHost, err := s.anthias.GetMetadata(); err == nil {
+		if storedHost, err := s.store.GetByID(localHost.ID); err == nil {
+			currentIP = storedHost.IPAddress
+		} else {
+			currentIP = localHost.IPAddress
+		}
+	}
+
+	// Identify duplicate hostnames
+	allHosts := s.store.GetAll()
+	hostnameCounts := make(map[string]int)
+	for _, h := range allHosts {
+		if h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
+			hostnameCounts[h.Hostname]++
+		}
+	}
+	duplicateHostnames := make(map[string]bool)
+	for name, count := range hostnameCounts {
+		if count > 1 {
+			duplicateHostnames[name] = true
+		}
+	}
+
+	templateData := TemplateData{
+		Hosts:              allHosts,
+		CurrentHostIP:      currentIP,
+		CurrentVersion:     types.Version,
+		DuplicateHostnames: duplicateHostnames,
+	}
+
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "host-rows", templateData); err != nil {
+		log.Printf("Error rendering host-rows template: %v", err)
+		return nil
+	}
+
+	// Format as Datastar SSE event
+	var result bytes.Buffer
+	fmt.Fprintf(&result, "event: datastar-merge-fragments\n")
+	
+	lines := strings.Split(buf.String(), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fmt.Fprintf(&result, "data: fragments %s\n", line)
+	}
+	fmt.Fprintf(&result, "\n")
+	
+	return result.Bytes()
+}
+
+// handleHostsStream establishes an SSE connection and streams host list updates
 func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable proxy buffering
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -615,87 +727,35 @@ func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Helper to render and send the host list
-	sendUpdate := func() error {
-		// Get current host IP based on persistent ID
-		currentIP := ""
-		if localHost, err := s.anthias.GetMetadata(); err == nil {
-			// Try to find this host in the store to get its user-preferred IP
-			if storedHost, err := s.store.GetByID(localHost.ID); err == nil {
-				currentIP = storedHost.IPAddress
-			} else {
-				// Fallback to detected IP
-				currentIP = localHost.IPAddress
-			}
-		}
+	// Create a channel for this client
+	clientChan := make(chan []byte, 10)
+	s.sseBroker.register(clientChan)
+	defer s.sseBroker.unregister(clientChan)
 
-		// Identify duplicate hostnames
-		allHosts := s.store.GetAll()
-		hostnameCounts := make(map[string]int)
-		for _, h := range allHosts {
-			if h.Hostname != "" && h.Hostname != "localhost" && h.Hostname != "unknown" {
-				hostnameCounts[h.Hostname]++
-			}
-		}
-		duplicateHostnames := make(map[string]bool)
-		for name, count := range hostnameCounts {
-			if count > 1 {
-				duplicateHostnames[name] = true
-			}
-		}
+	s.logger.Info("SSE client connected for host updates")
+	defer s.logger.Info("SSE client disconnected")
 
-		data := TemplateData{
-			Hosts:              allHosts,
-			CurrentHostIP:      currentIP,
-			CurrentVersion:     types.Version,
-			DuplicateHostnames: duplicateHostnames,
-		}
-
-		var buf bytes.Buffer
-		if err := s.templates.ExecuteTemplate(&buf, "host-rows", data); err != nil {
-			return err
-		}
-
-		// Send datastar-merge-fragments event
-		// Datastar expects:
-		// event: datastar-merge-fragments
-		// data: fragments <fragment>...
-		
-		fmt.Fprintf(w, "event: datastar-merge-fragments\n")
-		
-		lines := strings.Split(buf.String(), "\n")
-		for _, line := range lines {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			fmt.Fprintf(w, "data: fragments %s\n", line)
-		}
-		fmt.Fprintf(w, "\n")
+	// Send initial state immediately
+	initialData := s.renderHostListFragment()
+	if initialData != nil {
+		w.Write(initialData)
 		flusher.Flush()
-		return nil
 	}
 
-	// Send initial state
-	if err := sendUpdate(); err != nil {
-		log.Printf("Error sending initial SSE update: %v", err)
-		return
-	}
-
-	updates := s.store.Updates()
-	ticker := time.NewTicker(30 * time.Second) // Keep-alive / periodic refresh
-	defer ticker.Stop()
+	// Set up keep-alive ticker
+	keepAlive := time.NewTicker(30 * time.Second)
+	defer keepAlive.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-updates:
-			if err := sendUpdate(); err != nil {
-				log.Printf("Error sending SSE update: %v", err)
-				return
-			}
-		case <-ticker.C:
-			// Optional: send a comment or empty event to keep connection alive
+		case data := <-clientChan:
+			// Broadcast update received
+			w.Write(data)
+			flusher.Flush()
+		case <-keepAlive.C:
+			// Send keep-alive comment to prevent timeout
 			fmt.Fprintf(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
