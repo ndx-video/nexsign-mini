@@ -5,6 +5,28 @@
   </div>
 
   <div class="grid md:grid-cols-3 gap-4">
+    <!-- Fleet Synchronization -->
+    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
+      <h3 class="font-medium mb-3 text-desert-yellow">⚠️ Fleet Synchronization</h3>
+      <div class="space-y-3">
+        <div class="bg-orange-900/20 border border-orange-700/50 rounded p-2 mb-3">
+          <p class="text-xs text-orange-300">⚠️ <strong>Warning:</strong> These operations will overwrite peer host lists. Individual edits auto-sync automatically.</p>
+        </div>
+        <div>
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange" onclick="pushSelected()">
+            🔄 Replace Selected Peer Lists
+          </button>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Overwrite host lists on checked peers</p>
+        </div>
+        <div>
+          <button class="w-full text-left px-3 py-2 bg-red-900/50 hover:bg-red-900/70 rounded text-red-400 border border-red-700/50" onclick="if(confirm('⚠️ This will REPLACE the host list on ALL online peers. Are you sure?')) pushAll()">
+            ☢️ Force Sync All Peers
+          </button>
+          <p class="text-xs text-desert-gray mt-1 ml-1">Nuclear option: overwrite all peer lists</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Backup & Restore -->
     <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
       <h3 class="font-medium mb-3 text-desert-yellow">Backup & Restore <a href="#backup-history" class="text-xs text-desert-cyan hover:text-desert-cyan/80">(history)</a></h3>
