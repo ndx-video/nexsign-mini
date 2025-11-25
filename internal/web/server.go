@@ -37,6 +37,7 @@ type TemplateData struct {
 	Interfaces         []string
 	EnvVarSet          bool
 	DuplicateHostnames map[string]bool
+	EditLocks          map[string]string // hostID -> editorID
 }
 
 // sseBroker manages SSE connections for broadcasting host updates
@@ -84,6 +85,8 @@ type Server struct {
 	templates  *template.Template
 	logger     *logger.Logger
 	sseBroker  *sseBroker
+	editLocks  map[string]string // hostID -> editorID
+	editMu     sync.RWMutex
 }
 
 // NewServer creates a new web server.
@@ -100,6 +103,7 @@ func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Se
 		templates: templates,
 		logger:    logger.New(200), // Keep last 200 messages
 		sseBroker: newSSEBroker(),
+		editLocks: make(map[string]string),
 	}
 	
 	// Log server initialization
@@ -141,6 +145,9 @@ func (s *Server) Start() <-chan error {
 	mux.HandleFunc("/api/hosts/set-primary", s.handleSetPrimaryHost)
 	mux.HandleFunc("/api/hosts/check", s.handleCheckHosts)
 	mux.HandleFunc("/api/hosts/stream", s.handleHostsStream)
+	mux.HandleFunc("/api/hosts/announce", s.handleAnnounceHost)
+	mux.HandleFunc("/api/hosts/lock", s.handleLockHost)
+	mux.HandleFunc("/api/hosts/unlock", s.handleUnlockHost)
 	mux.HandleFunc("/api/hosts/push", s.handlePushHosts)
 	mux.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
 	mux.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
@@ -235,6 +242,13 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.editMu.RLock()
+	editLocks := make(map[string]string)
+	for k, v := range s.editLocks {
+		editLocks[k] = v
+	}
+	s.editMu.RUnlock()
+
 	data := TemplateData{
 		Hosts:              allHosts,
 		CurrentHostIP:      currentIP,
@@ -242,6 +256,7 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 		Interfaces:         interfaces,
 		EnvVarSet:          os.Getenv("NSM_HOST_IP") != "",
 		DuplicateHostnames: duplicateHostnames,
+		EditLocks:          editLocks,
 	}
 
 	var buf bytes.Buffer
@@ -445,6 +460,9 @@ func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info(fmt.Sprintf("Added new host: %s (%s)", ip, nickname))
 
+	// Auto-push to online peers
+	go s.pushToOnlinePeers(host)
+
 	// Check health of new host
 	go func(base types.Host) {
 		updated := base
@@ -550,6 +568,9 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info(fmt.Sprintf("Updated host: %s -> %s", updateReq.OldIP, newIP))
 
 	if updatedHost, getErr := s.store.GetByIP(newIP); getErr == nil {
+		// Auto-push to online peers
+		go s.pushToOnlinePeers(*updatedHost)
+		
 		go func(toRefresh *types.Host) {
 			hosts.CheckHealth(toRefresh)
 			if err := s.store.Update(toRefresh.IPAddress, func(h *types.Host) {
@@ -685,11 +706,19 @@ func (s *Server) renderHostListFragment() []byte {
 		}
 	}
 
+	s.editMu.RLock()
+	editLocks := make(map[string]string)
+	for k, v := range s.editLocks {
+		editLocks[k] = v
+	}
+	s.editMu.RUnlock()
+
 	templateData := TemplateData{
 		Hosts:              allHosts,
 		CurrentHostIP:      currentIP,
 		CurrentVersion:     types.Version,
 		DuplicateHostnames: duplicateHostnames,
+		EditLocks:          editLocks,
 	}
 
 	var buf bytes.Buffer
@@ -759,6 +788,297 @@ func (s *Server) handleHostsStream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
+	}
+}
+
+// handleAnnounceHost receives a single host announcement and upserts it
+func (s *Server) handleAnnounceHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var host types.Host
+	if err := json.NewDecoder(r.Body).Decode(&host); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that we have at least an ID and IP
+	if host.ID == "" || host.IPAddress == "" {
+		http.Error(w, "Host ID and IP address are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.Upsert(host); err != nil {
+		log.Printf("Failed to upsert announced host: %v", err)
+		http.Error(w, "Failed to upsert host", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info(fmt.Sprintf("Received host announcement: %s (ID: %s)", host.IPAddress, host.ID))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleLockHost attempts to acquire an edit lock on a host
+func (s *Server) handleLockHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		HostID   string `json:"host_id"`
+		EditorID string `json:"editor_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.HostID == "" || req.EditorID == "" {
+		http.Error(w, "host_id and editor_id are required", http.StatusBadRequest)
+		return
+	}
+
+	s.editMu.Lock()
+	existingEditor, locked := s.editLocks[req.HostID]
+	if locked && existingEditor != req.EditorID {
+		s.editMu.Unlock()
+		resp := map[string]interface{}{
+			"success": false,
+			"locked_by": existingEditor,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+	s.editLocks[req.HostID] = req.EditorID
+	s.editMu.Unlock()
+
+	s.logger.Info(fmt.Sprintf("Lock acquired: host %s by %s", req.HostID, req.EditorID))
+	
+	// Broadcast lock state via SSE
+	s.broadcastLockState()
+	
+	// Announce lock to peers
+	go s.announceLockToPeers(req.HostID, req.EditorID, true)
+
+	resp := map[string]interface{}{
+		"success": true,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleUnlockHost releases an edit lock on a host
+func (s *Server) handleUnlockHost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		HostID   string `json:"host_id"`
+		EditorID string `json:"editor_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.HostID == "" {
+		http.Error(w, "host_id is required", http.StatusBadRequest)
+		return
+	}
+
+	s.editMu.Lock()
+	existingEditor, locked := s.editLocks[req.HostID]
+	// Only allow unlock if the editor matches or if no editor specified (force unlock)
+	if locked && req.EditorID != "" && existingEditor != req.EditorID {
+		s.editMu.Unlock()
+		http.Error(w, "Cannot unlock: locked by different editor", http.StatusForbidden)
+		return
+	}
+	delete(s.editLocks, req.HostID)
+	s.editMu.Unlock()
+
+	s.logger.Info(fmt.Sprintf("Lock released: host %s", req.HostID))
+	
+	// Broadcast lock state via SSE
+	s.broadcastLockState()
+	
+	// Announce unlock to peers
+	go s.announceLockToPeers(req.HostID, req.EditorID, false)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// broadcastLockState sends current lock state to all SSE clients
+func (s *Server) broadcastLockState() {
+	s.editMu.RLock()
+	locks := make(map[string]string)
+	for k, v := range s.editLocks {
+		locks[k] = v
+	}
+	s.editMu.RUnlock()
+
+	data, err := json.Marshal(map[string]interface{}{
+		"locks": locks,
+	})
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to marshal lock state: %v", err))
+		return
+	}
+
+	msg := fmt.Sprintf("event: lock-state\ndata: %s\n\n", string(data))
+	s.sseBroker.broadcast([]byte(msg))
+}
+
+// pushToOnlinePeers pushes a single host to all online peers on the same subnet
+func (s *Server) pushToOnlinePeers(host types.Host) {
+	allHosts := s.store.GetAll()
+	localSubnet := getSubnet(host.IPAddress)
+
+	if localSubnet == "" {
+		s.logger.Warning(fmt.Sprintf("Cannot determine subnet for %s, skipping peer push", host.IPAddress))
+		return
+	}
+
+	peerCount := 0
+	for _, peer := range allHosts {
+		// Skip self
+		if peer.ID == host.ID {
+			continue
+		}
+
+		// Only push to healthy/online hosts
+		if peer.Status != types.StatusHealthy {
+			continue
+		}
+
+		// Only push to hosts on the same subnet
+		peerSubnet := getSubnet(peer.IPAddress)
+		if peerSubnet != localSubnet {
+			continue
+		}
+
+		peerCount++
+		go func(targetIP, targetID string) {
+			body, err := json.Marshal(host)
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("Failed to marshal host for peer push: %v", err))
+				return
+			}
+
+			url := fmt.Sprintf("http://%s:8080/api/hosts/announce", targetIP)
+			client := &http.Client{Timeout: 3 * time.Second}
+			resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				s.logger.Warning(fmt.Sprintf("Failed to announce to peer %s: %v", targetIP, err))
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusNoContent {
+				s.logger.Info(fmt.Sprintf("Announced host %s to peer %s", host.IPAddress, targetIP))
+			} else {
+				s.logger.Warning(fmt.Sprintf("Peer %s returned status %d for announcement", targetIP, resp.StatusCode))
+			}
+		}(peer.IPAddress, peer.ID)
+	}
+
+	if peerCount > 0 {
+		s.logger.Info(fmt.Sprintf("Announcing host %s to %d online peers on subnet %s.0/24", host.IPAddress, peerCount, localSubnet))
+	} else {
+		s.logger.Info(fmt.Sprintf("No online peers on subnet %s.0/24 to announce to", localSubnet))
+	}
+}
+
+// getSubnet extracts the first three octets of an IP address (e.g., "192.168.10" from "192.168.10.5")
+func getSubnet(ip string) string {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return ""
+	}
+	return strings.Join(parts[:3], ".")
+}
+
+// announceLockToPeers announces a lock/unlock operation to online peers on the same subnet
+func (s *Server) announceLockToPeers(hostID, editorID string, isLock bool) {
+	allHosts := s.store.GetAll()
+	
+	// Get the host being locked to determine its subnet
+	var targetHost *types.Host
+	for _, h := range allHosts {
+		if h.ID == hostID {
+			targetHost = &h
+			break
+		}
+	}
+	
+	if targetHost == nil {
+		s.logger.Warning(fmt.Sprintf("Cannot find host %s for lock announcement", hostID))
+		return
+	}
+	
+	localSubnet := getSubnet(targetHost.IPAddress)
+	if localSubnet == "" {
+		s.logger.Warning(fmt.Sprintf("Cannot determine subnet for %s, skipping lock announcement", targetHost.IPAddress))
+		return
+	}
+
+	endpoint := "/api/hosts/lock"
+	if !isLock {
+		endpoint = "/api/hosts/unlock"
+	}
+
+	peerCount := 0
+	for _, peer := range allHosts {
+		// Skip self
+		if peer.ID == targetHost.ID {
+			continue
+		}
+
+		// Only announce to healthy/online hosts
+		if peer.Status != types.StatusHealthy {
+			continue
+		}
+
+		// Only announce to hosts on the same subnet
+		peerSubnet := getSubnet(peer.IPAddress)
+		if peerSubnet != localSubnet {
+			continue
+		}
+
+		peerCount++
+		go func(targetIP string) {
+			reqBody := map[string]string{
+				"host_id":   hostID,
+				"editor_id": editorID,
+			}
+			body, err := json.Marshal(reqBody)
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("Failed to marshal lock request: %v", err))
+				return
+			}
+
+			url := fmt.Sprintf("http://%s:8080%s", targetIP, endpoint)
+			resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+			if err != nil {
+				// Silently ignore peer announcement failures
+				return
+			}
+			defer resp.Body.Close()
+		}(peer.IPAddress)
+	}
+
+	if peerCount > 0 {
+		action := "locked"
+		if !isLock {
+			action = "unlocked"
+		}
+		s.logger.Info(fmt.Sprintf("Announcing %s state for host %s to %d peer(s)", action, hostID, peerCount))
 	}
 }
 
