@@ -1,15 +1,19 @@
 {{define "host-rows"}}
 <tbody id="host_table_body" class="divide-y divide-desert-gray">
+    {{template "host-rows-content" .}}
+</tbody>
+{{end}}
+
+{{define "host-rows-content"}}
     {{range .Hosts}}
     {{$isLocked := index $.EditLocks .ID}}
     <tr data-ip="{{.IPAddress}}" data-vpn="{{.VPNIPAddress}}" data-hostname="{{.Hostname}}" data-host-id="{{.ID}}" {{if $isLocked}}data-locked-by="{{$isLocked}}" class="opacity-60 pointer-events-none relative"{{end}}>
         {{if $isLocked}}
-        <td colspan="8" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-desert-yellow font-bold text-lg z-10 pointer-events-none">
+        <td colspan="7" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-desert-yellow font-bold text-lg z-10 pointer-events-none">
             ⚠️ INFORMATION IS BEING EDITED BY {{$isLocked}}
         </td>
         {{end}}
-        <td class="px-2 py-2 align-top text-center"><input type="checkbox" class="row-select" {{if $isLocked}}disabled{{end}}></td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div class="nickname-display text-desert-tan">
                 {{if .Nickname}}{{.Nickname}}{{else}}<span class="text-desert-gray italic">unnamed</span>{{end}}
                 {{if .Hostname}} <span class="text-desert-gray text-xs">({{.Hostname}})</span>{{end}}
@@ -20,7 +24,7 @@
             <input type="text" class="nickname-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full"
                 value="{{.Nickname}}" placeholder="Friendly label">
         </td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div class="ip-lan-display text-sm text-desert-fg">{{.IPAddress}}</div>
             <div class="text-xs mt-1">
                 <a class="text-blue-400 hover:text-blue-300 underline cursor-pointer"
@@ -36,16 +40,16 @@
                 class="lan-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
                 value="{{.IPAddress}}" placeholder="192.168.1.100">
         </td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div
-                class="vpn-ip-display font-mono {{if .VPNIPAddress}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
-                {{if .VPNIPAddress}}{{.VPNIPAddress}}{{else}}—{{end}}
+                class="vpn-ip-display font-mono {{if .VPNIPAddress}}text-desert-tan{{else}}text-gray-500{{end}}">
+                {{if .VPNIPAddress}}{{.VPNIPAddress}}{{else}}no VPN{{end}}
             </div>
             <input type="text"
                 class="vpn-ip-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full font-mono"
                 value="{{.VPNIPAddress}}" placeholder="100.64.x.x">
         </td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div class="flex flex-col gap-1">
                 <div class="inline-flex items-center gap-2">
                     {{if eq .Status "healthy"}}
@@ -131,7 +135,7 @@
                 {{end}}
             </div>
         </td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div class="flex flex-col gap-1">
                 <div>
                     {{if eq .CMSStatus "CMS Online"}}
@@ -167,7 +171,7 @@
                 {{end}}
             </div>
         </td>
-        <td class="px-4 py-2 align-top">
+        <td class="p-1 align-top">
             <div
                 class="notes-display whitespace-pre-wrap {{if .Notes}}text-desert-tan{{else}}text-desert-gray italic{{end}}">
                 {{if .Notes}}{{.Notes}}{{else}}—{{end}}
@@ -175,7 +179,7 @@
             <textarea class="notes-edit hidden bg-desert-gray text-desert-fg px-2 py-1 rounded w-full" rows="2"
                 placeholder="Optional notes">{{.Notes}}</textarea>
         </td>
-        <td class="px-4 py-2 align-top text-right">
+        <td class="p-1 align-top text-right">
             <div class="flex justify-end items-center gap-3">
                 {{if eq .CMSStatus "CMS Online"}}
                 <button class="info-btn text-blue-400 hover:text-blue-300 text-lg" title="Info"
@@ -193,5 +197,4 @@
         </td>
     </tr>
     {{end}}
-</tbody>
 {{end}}

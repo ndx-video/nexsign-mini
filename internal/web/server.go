@@ -722,12 +722,12 @@ func (s *Server) renderHostListFragment() []byte {
 	}
 
 	var buf bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&buf, "host-rows", templateData); err != nil {
-		log.Printf("Error rendering host-rows template: %v", err)
+	if err := s.templates.ExecuteTemplate(&buf, "host-rows-content", templateData); err != nil {
+		log.Printf("Error rendering host-rows-content template: %v", err)
 		return nil
 	}
 
-	// Format as Datastar SSE event
+	// Format as Datastar SSE event - wrap the tbody content with ID for targeted replacement
 	var result bytes.Buffer
 	fmt.Fprintf(&result, "event: datastar-merge-fragments\n")
 	

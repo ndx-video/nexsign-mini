@@ -55,17 +55,11 @@
 
 <body class="min-h-screen flex flex-col bg-desert-bg text-desert-tan">
 
-    <nav class="w-full bg-desert-darkgray border-b border-desert-gray h-14 px-4 flex items-center justify-between">
-        <div class="breadcrumbs flex items-center gap-2 text-sm">
-            <div class="text-lg font-semibold text-desert-cyan inline-flex items-center gap-2">NSM Dashboard </div>
-            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
-                data-on-click="@get('/views/home')" onclick="onViewLoad('home')">Home</a>
-            <span class="text-desert-gray">/</span>
-            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
-                data-on-click="@get('/views/advanced')" onclick="onViewLoad('advanced')">Advanced</a>
-            <span class="text-desert-gray">/</span>
-            <a class="text-desert-yellow hover:text-desert-orange py-2 cursor-pointer"
-                data-on-click="@get('/views/api')" onclick="onViewLoad('api')">API</a>
+    <nav class="w-full bg-desert-darkgray border-b border-desert-gray h-14 px-4 flex items-center justify-evenly">
+        <div class="breadcrumbs text-sm text-desert-yellow py-2 cursor-pointer align-items-start">
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/home')" onclick="onViewLoad('home')">Home</a> /
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/advanced')">Advanced</a> /
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/api')" onclick="onViewLoad('api')">API</a>
         </div>
     <!-- Universal status bar for realtime messages -->
         <div id="status-bar" class="flex items-center gap-3 px-4 py-2">
@@ -75,7 +69,10 @@
                 <div id="status-msg-2" class="text-desert-gray/40"></div>
             </div>
         </div>
-        <div class="text-xs text-desert-gray select-none">nexSign mini <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}} <span class="text-desert-gray/60">(build-ts: {{.BuildTime}})</span></span></div>
+        <div class="text-xs text-desert-gray select-none">nexSign mini 
+            <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}}</span>
+            <span class="text-desert-gray/60">(build-ts: {{.BuildTime}})</span>
+        </div>
     </nav>
 
 

@@ -1,21 +1,23 @@
-<span class="text-base font-semibold mb-3 text-desert-fg">Signage Fleet </span>
-
-<div class="host-list" id="host-list-container" data-on-sse="@get('/api/hosts/stream')">
-    <table class="min-w-full bg-desert-darkgray shadow-lg rounded overflow-hidden border border-desert-gray">
+<div class="my-2 text-center">
+    <div class="text-sm font-semibold text-desert-fg">nexSign Fleet</div>
+    <div class="text-sm text-desert-tan">Management Dashboard for nexSign mini (NSM) hosts</div>
+</div>
+<div class="host-list" id="host-list-container">
+    <table class="min-w-full overflow-hidden border border-desert-gray">
         <thead>
-            <tr class="bg-desert-gray text-left text-desert-tan text-sm">
-                <th class="px-2 py-3 w-8 text-center"><input id="select-all" type="checkbox"
-                        onchange="toggleSelectAll(this)"></th>
-                <th class="px-4 py-3">Nickname [Hostname]</th>
-                <th class="px-4 py-3">LAN IP</th>
-                <th class="px-4 py-3">VPN IP</th>
-                <th class="px-4 py-3">NSM Dash</th>
-                <th class="px-4 py-3">Anthias Dash</th>
-                <th class="px-4 py-3">Notes</th>
-                <th class="px-4 py-3">Actions</th>
+            <tr class="bg-desert-darkgray text-left text-desert-tan text-xs uppercase">
+                <th class="p-1 font-normal">Name</th>
+                <th class="p-1 font-normal">LAN IP</th>
+                <th class="p-1 font-normal">VPN IP</th>
+                <th class="p-1 font-normal">NSM Dash</th>
+                <th class="p-1 font-normal">Anthias Dash</th>
+                <th class="p-1 font-normal">Notes</th>
+                <th class="p-1 font-normal">Actions</th>
             </tr>
         </thead>
-        {{template "host-rows" .}}
+        <tbody id="host_table_body" data-on-sse="@get('/api/hosts/stream')">
+            {{template "host-rows-content" .}}
+        </tbody>
     </table>
 </div>
 
