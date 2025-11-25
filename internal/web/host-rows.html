@@ -1,8 +1,14 @@
 {{define "host-rows"}}
 <tbody id="host_table_body" class="divide-y divide-desert-gray">
     {{range .Hosts}}
-    <tr data-ip="{{.IPAddress}}" data-vpn="{{.VPNIPAddress}}" data-hostname="{{.Hostname}}">
-        <td class="px-2 py-2 align-top text-center"><input type="checkbox" class="row-select"></td>
+    {{$isLocked := index $.EditLocks .ID}}
+    <tr data-ip="{{.IPAddress}}" data-vpn="{{.VPNIPAddress}}" data-hostname="{{.Hostname}}" data-host-id="{{.ID}}" {{if $isLocked}}data-locked-by="{{$isLocked}}" class="opacity-60 pointer-events-none relative"{{end}}>
+        {{if $isLocked}}
+        <td colspan="8" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-desert-yellow font-bold text-lg z-10 pointer-events-none">
+            ⚠️ INFORMATION IS BEING EDITED BY {{$isLocked}}
+        </td>
+        {{end}}
+        <td class="px-2 py-2 align-top text-center"><input type="checkbox" class="row-select" {{if $isLocked}}disabled{{end}}></td>
         <td class="px-4 py-2 align-top">
             <div class="nickname-display text-desert-tan">
                 {{if .Nickname}}{{.Nickname}}{{else}}<span class="text-desert-gray italic">unnamed</span>{{end}}
@@ -173,16 +179,16 @@
             <div class="flex justify-end items-center gap-3">
                 {{if eq .CMSStatus "CMS Online"}}
                 <button class="info-btn text-blue-400 hover:text-blue-300 text-lg" title="Info"
-                    onclick="toggleInfo(this, '{{.IPAddress}}')">ℹ️</button>
+                    onclick="toggleInfo(this, '{{.IPAddress}}')" {{if $isLocked}}disabled{{end}}>ℹ️</button>
                 {{end}}
                 <button class="edit-btn text-desert-cyan hover:text-desert-yellow text-lg" title="Edit"
-                    onclick="enterEditMode(this)">✏️</button>
+                    onclick="enterEditMode(this)" {{if $isLocked}}disabled{{end}}>✏️</button>
                 <button class="save-btn hidden text-green-400 hover:text-green-300 text-lg font-bold" title="Save"
                     onclick="saveEdit(this)">✓</button>
                 <button class="cancel-btn hidden text-red-400 hover:text-red-300 text-lg font-bold" title="Cancel"
                     onclick="cancelEdit(this)">✗</button>
                 <button class="text-red-400 hover:text-red-300" title="Delete"
-                    data-on-click="@delete('/api/hosts/delete?ip={{.IPAddress}}')">🗑️</button>
+                    data-on-click="@delete('/api/hosts/delete?ip={{.IPAddress}}')" {{if $isLocked}}disabled{{end}}>🗑️</button>
             </div>
         </td>
     </tr>
