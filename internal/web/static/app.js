@@ -3,6 +3,13 @@
 const HOST_TABLE_COLUMN_COUNT = 8;
 const ipv4Pattern = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
+// Generate unique editor ID for this browser session
+let EDITOR_ID = sessionStorage.getItem('nsm_editor_id');
+if (!EDITOR_ID) {
+    EDITOR_ID = 'editor_' + Math.random().toString(36).substring(2, 15);
+    sessionStorage.setItem('nsm_editor_id', EDITOR_ID);
+}
+
 function validateIPv4(value) {
     if (!value) {
         return false;
@@ -49,63 +56,92 @@ window.pushAll = function () {
 
 window.enterEditMode = function (button) {
     const row = button.closest('tr');
-
-    const nicknameDisplay = row.querySelector('.nickname-display');
-    const nicknameInput = row.querySelector('.nickname-edit');
-    const lanDisplay = row.querySelector('.ip-lan-display');
-    const lanInput = row.querySelector('.lan-ip-edit');
-    const vpnDisplay = row.querySelector('.vpn-ip-display');
-    const vpnInput = row.querySelector('.vpn-ip-edit');
-    const notesDisplay = row.querySelector('.notes-display');
-    const notesInput = row.querySelector('.notes-edit');
-
-    if (nicknameDisplay && nicknameInput) {
-        nicknameDisplay.classList.add('hidden');
-        nicknameInput.classList.remove('hidden');
+    const hostID = row.getAttribute('data-host-id');
+    
+    if (!hostID) {
+        alert('Unable to edit: host ID not found');
+        return;
     }
 
-    if (lanDisplay && lanInput) {
-        lanDisplay.classList.add('hidden');
-        lanInput.classList.remove('hidden');
-    }
-
-    if (vpnDisplay && vpnInput) {
-        vpnDisplay.classList.add('hidden');
-        vpnInput.classList.remove('hidden');
-    }
-
-    if (notesDisplay && notesInput) {
-        notesDisplay.classList.add('hidden');
-        notesInput.classList.remove('hidden');
-    }
-
-    [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
-        if (el) {
-            el.dataset.originalValue = el.value;
+    // Attempt to acquire lock
+    fetch('/api/hosts/lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            host_id: hostID,
+            editor_id: EDITOR_ID
+        })
+    }).then(resp => resp.json()).then(data => {
+        if (!data.success) {
+            alert(`This host is currently being edited by ${data.locked_by}. Please try again later.`);
+            return;
         }
+
+        // Lock acquired successfully, enter edit mode
+        const nicknameDisplay = row.querySelector('.nickname-display');
+        const nicknameInput = row.querySelector('.nickname-edit');
+        const lanDisplay = row.querySelector('.ip-lan-display');
+        const lanInput = row.querySelector('.lan-ip-edit');
+        const vpnDisplay = row.querySelector('.vpn-ip-display');
+        const vpnInput = row.querySelector('.vpn-ip-edit');
+        const notesDisplay = row.querySelector('.notes-display');
+        const notesInput = row.querySelector('.notes-edit');
+
+        if (nicknameDisplay && nicknameInput) {
+            nicknameDisplay.classList.add('hidden');
+            nicknameInput.classList.remove('hidden');
+        }
+
+        if (lanDisplay && lanInput) {
+            lanDisplay.classList.add('hidden');
+            lanInput.classList.remove('hidden');
+        }
+
+        if (vpnDisplay && vpnInput) {
+            vpnDisplay.classList.add('hidden');
+            vpnInput.classList.remove('hidden');
+        }
+
+        if (notesDisplay && notesInput) {
+            notesDisplay.classList.add('hidden');
+            notesInput.classList.remove('hidden');
+        }
+
+        [nicknameInput, lanInput, vpnInput, notesInput].forEach(el => {
+            if (el) {
+                el.dataset.originalValue = el.value;
+            }
+        });
+
+        row.querySelector('.edit-btn').classList.add('hidden');
+        row.querySelector('.save-btn').classList.remove('hidden');
+        row.querySelector('.cancel-btn').classList.remove('hidden');
+
+        const enterHandler = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                window.saveEdit(row.querySelector('.save-btn'));
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                window.cancelEdit(row.querySelector('.cancel-btn'));
+            }
+        };
+
+        [nicknameInput, lanInput, vpnInput].forEach(el => el && el.addEventListener('keydown', enterHandler));
+        notesInput && notesInput.addEventListener('keydown', enterHandler);
+
+        if (lanInput) {
+            lanInput.focus();
+        }
+    }).catch(err => {
+        alert('Failed to acquire edit lock. Please try again.');
+        console.error('Lock acquisition error:', err);
     });
-
-    row.querySelector('.edit-btn').classList.add('hidden');
-    row.querySelector('.save-btn').classList.remove('hidden');
-    row.querySelector('.cancel-btn').classList.remove('hidden');
-
-    const enterHandler = (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            window.saveEdit(row.querySelector('.save-btn'));
-        }
-    };
-
-    [nicknameInput, lanInput, vpnInput].forEach(el => el && el.addEventListener('keydown', enterHandler));
-    notesInput && notesInput.addEventListener('keydown', enterHandler);
-
-    if (lanInput) {
-        lanInput.focus();
-    }
 };
 
 window.cancelEdit = function (button) {
     const row = button.closest('tr');
+    const hostID = row.getAttribute('data-host-id');
 
     const nicknameDisplay = row.querySelector('.nickname-display');
     const nicknameInput = row.querySelector('.nickname-edit');
@@ -142,11 +178,24 @@ window.cancelEdit = function (button) {
     row.querySelector('.edit-btn').classList.remove('hidden');
     row.querySelector('.save-btn').classList.add('hidden');
     row.querySelector('.cancel-btn').classList.add('hidden');
+
+    // Release lock
+    if (hostID) {
+        fetch('/api/hosts/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                host_id: hostID,
+                editor_id: EDITOR_ID
+            })
+        }).catch(err => console.error('Failed to release lock:', err));
+    }
 };
 
 window.saveEdit = function (button) {
     const row = button.closest('tr');
     const oldIP = row.dataset.ip;
+    const hostID = row.getAttribute('data-host-id');
 
     const nicknameInput = row.querySelector('.nickname-edit');
     const lanInput = row.querySelector('.lan-ip-edit');
@@ -182,6 +231,19 @@ window.saveEdit = function (button) {
         if (!resp.ok) {
             throw new Error('update failed');
         }
+        
+        // Release lock after successful save
+        if (hostID) {
+            fetch('/api/hosts/unlock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    host_id: hostID,
+                    editor_id: EDITOR_ID
+                })
+            }).catch(err => console.error('Failed to release lock:', err));
+        }
+        
         // SSE will update the row
     }).catch(() => {
         alert('Failed to update host. Please try again.');
