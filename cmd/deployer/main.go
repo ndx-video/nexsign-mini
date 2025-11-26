@@ -79,6 +79,9 @@ func main() {
 	}
 
 	if !skipBuild {
+		if err := generateDocs(); err != nil {
+			log.Fatalf("generate docs: %v", err)
+		}
 		if err := buildBinary(binaryPath); err != nil {
 			log.Fatalf("build binary: %v", err)
 		}
@@ -188,7 +191,7 @@ func deployHost(host, keyPath, binaryPath, webDir, remoteDir string) error {
 	}
 
 	// Clean up database to force fresh start, but try to preserve identity
-	cleanCmd := fmt.Sprintf("rm -f %[1]s/hosts.db %[1]s/hosts.json && mkdir -p %[1]s/internal/web/static", remoteDir)
+	cleanCmd := fmt.Sprintf("mkdir -p %[1]s/internal/web/static", remoteDir)
 	if err := sshRun(sshTarget, keyPath, cleanCmd, 20*time.Second); err != nil {
 		return fmt.Errorf("clean remote directories: %w", err)
 	}
@@ -293,3 +296,12 @@ func stopRemoteBinary(target, keyPath string) error {
 	waitCmd := "count=0; while pgrep -f 'nsm$' >/dev/null; do if [ \"$count\" -ge 15 ]; then exit 1; fi; count=$((count+1)); sleep 1; done"
 	return sshRun(target, keyPath, waitCmd, 20*time.Second)
 }
+
+func generateDocs() error {
+	log.Println("Generating API documentation...")
+	cmd := exec.Command("go", "run", "cmd/docgen/main.go")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+

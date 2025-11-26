@@ -1,177 +1,207 @@
-<div class="my-2 text-center">
-  <div class="text-sm font-semibold text-desert-fg">API Reference</div>
-  <div class="text-sm text-desert-tan">...</div>
-</div>
 
-<div class="h-full flex flex-col gap-4">
-  <div class="space-y-4">
-    <!-- Health & Version -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Health & Version</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/health" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/health</a>
-          <div class="text-desert-tan text-xs mt-1">Returns server health status</div>
-          <div class="text-desert-gray text-xs mt-1">Response: {"status": "ok"}</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/version" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/version</a>
-          <div class="text-desert-tan text-xs mt-1">Returns NSM version and node ID</div>
-          <div class="text-desert-gray text-xs mt-1">Response: {"version": "...", "status": "ok", "id": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/host/local" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/host/local</a>
-          <div class="text-desert-tan text-xs mt-1">Returns metadata for this specific host</div>
-          <div class="text-desert-gray text-xs mt-1">Response: Host object with full details</div>
-        </div>
-      </div>
+<div class="flex h-full gap-6">
+  <!-- Main Content: Endpoints List -->
+  <div class="flex-1 min-w-0">
+    <div class="my-2 text-center">
+      <div class="text-sm font-semibold text-desert-fg">API Reference</div>
+      <div class="text-sm text-desert-tan">Auto-generated from code comments</div>
     </div>
 
-    <!-- Host Management -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Host Management</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/hosts" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/hosts</a>
-          <div class="text-desert-tan text-xs mt-1">Get all hosts in the fleet</div>
-          <div class="text-desert-gray text-xs mt-1">Response: Array of Host objects</div>
-        </div>
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/hosts/add</div>
-          <div class="text-desert-tan text-xs mt-1">Add a new host to the fleet</div>
-          <div class="text-desert-gray text-xs mt-1">Body: {"nickname": "...", "ip_address": "...", "vpn_ip_address": "...", "notes": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/hosts/update</div>
-          <div class="text-desert-tan text-xs mt-1">Update an existing host</div>
-          <div class="text-desert-gray text-xs mt-1">Body: {"old_ip": "...", "ip_address": "...", "vpn_ip_address": "...", "nickname": "...", "notes": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-red pl-3">
-          <div class="text-desert-red">POST /api/hosts/delete?ip=...</div>
-          <div class="text-desert-tan text-xs mt-1">Delete a host from the fleet</div>
-          <div class="text-desert-gray text-xs mt-1">Query param: ip (IP address of host to delete)</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/hosts/set-primary?id=...</div>
-          <div class="text-desert-tan text-xs mt-1">Set a host as primary and remove duplicates</div>
-          <div class="text-desert-gray text-xs mt-1">Query param: id (Host ID to set as primary)</div>
-        </div>
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/hosts/check</div>
-          <div class="text-desert-tan text-xs mt-1">Trigger health check on all hosts</div>
-          <div class="text-desert-gray text-xs mt-1">Response: 204 No Content</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/hosts/stream" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/hosts/stream</a>
-          <div class="text-desert-tan text-xs mt-1">SSE stream of host list updates (Datastar)</div>
-          <div class="text-desert-gray text-xs mt-1">Content-Type: text/event-stream</div>
-        </div>
-      </div>
-    </div>
+    <div class="space-y-4">
+      <div class="rounded p-4 border border-desert-gray">
+        <h3 class="font-medium mb-3 text-desert-yellow">Endpoints</h3>
+        <div class="space-y-3 text-sm font-mono">
 
-    <!-- Fleet Operations -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Fleet Operations</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/hosts/push</div>
-          <div class="text-desert-tan text-xs mt-1">Push current host list to all other hosts</div>
-          <div class="text-desert-gray text-xs mt-1">Body (optional): {"targets": ["ip1", "ip2", ...]}</div>
-        </div>
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/hosts/receive</div>
-          <div class="text-desert-tan text-xs mt-1">Receive pushed host list from another host</div>
-          <div class="text-desert-gray text-xs mt-1">Body: Array of Host objects. Query param: merge=true (optional)</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/hosts/reboot</div>
-          <div class="text-desert-tan text-xs mt-1">Reboot a host (forwarded if not local)</div>
-          <div class="text-desert-gray text-xs mt-1">Body: {"target_ip": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/hosts/upgrade</div>
-          <div class="text-desert-tan text-xs mt-1">Run package upgrade on a host (forwarded if not local)</div>
-          <div class="text-desert-gray text-xs mt-1">Body: {"target_ip": "..."}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Backup & Restore -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Backup & Restore</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/hosts/export/internal</div>
-          <div class="text-desert-tan text-xs mt-1">Create internal backup of host list</div>
-          <div class="text-desert-gray text-xs mt-1">Response: {"status": "ok", "path": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/hosts/export/download" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/hosts/export/download</a>
-          <div class="text-desert-tan text-xs mt-1">Download host list as JSON file</div>
-          <div class="text-desert-gray text-xs mt-1">Returns: application/json file download</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <a href="/api/hosts/import/internal" target="_blank" class="text-desert-orange hover:text-desert-orange/80">GET|POST /api/hosts/import/internal</a>
-          <div class="text-desert-tan text-xs mt-1">Restore from most recent internal backup</div>
-          <div class="text-desert-gray text-xs mt-1">Response: {"status": "ok", "source": "..."}</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/hosts/import/upload</div>
-          <div class="text-desert-tan text-xs mt-1">Upload and restore from JSON file</div>
-          <div class="text-desert-gray text-xs mt-1">Body: Array of Host objects (JSON)</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <a href="/api/backups/list" target="_blank" class="text-desert-cyan hover:text-desert-cyan/80">GET /api/backups/list</a>
-          <div class="text-desert-tan text-xs mt-1">List all available backup files</div>
-          <div class="text-desert-gray text-xs mt-1">Response: [{"filename": "...", "timestamp": "...", "size": ...}]</div>
-        </div>
-        <div class="border-l-2 border-desert-orange pl-3">
-          <div class="text-desert-orange">POST /api/backups/restore?file=...</div>
-          <div class="text-desert-tan text-xs mt-1">Restore from a specific backup file</div>
-          <div class="text-desert-gray text-xs mt-1">Query param: file (backup filename)</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Discovery -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Discovery</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-green pl-3">
-          <div class="text-desert-green">POST /api/discovery/scan</div>
-          <div class="text-desert-tan text-xs mt-1">Scan local network for other NSM instances</div>
-          <div class="text-desert-gray text-xs mt-1">Query param: interface_ip (optional override). Response: 204 No Content</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Proxy -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Proxy</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <div class="text-desert-cyan">ANY /api/proxy/anthias?ip=...&path=...</div>
-          <div class="text-desert-tan text-xs mt-1">Proxy requests to Anthias devices (CORS bypass)</div>
-          <div class="text-desert-gray text-xs mt-1">Query params: ip (device IP), path (Anthias API path)</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- WebSocket -->
-    <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">WebSocket</h3>
-      <div class="space-y-3 text-sm font-mono">
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <div class="text-desert-cyan">WS /ws/diagnostics</div>
-          <div class="text-desert-tan text-xs mt-1">Real-time diagnostics data (stats, logs)</div>
-          <div class="text-desert-gray text-xs mt-1">Sends: {"time": "...", "node_id": "...", "hosts_count": ..., "last_backup": "...", "logs": [...]}</div>
-        </div>
-        <div class="border-l-2 border-desert-cyan pl-3">
-          <div class="text-desert-cyan">WS /ws/status</div>
-          <div class="text-desert-tan text-xs mt-1">Real-time status bar messages</div>
-          <div class="text-desert-gray text-xs mt-1">Sends: {"timestamp": "...", "text": "...", "level": "info|warning|error"}</div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/export/internal', '', 'Create internal backup of host list', 'POST /api/hosts/export/internal')">
+            <div class="text-desert-green font-bold">POST /api/hosts/export/internal</div>
+            <div class="text-desert-tan text-xs mt-1">Create internal backup of host list</div>
+            <div class="text-desert-tan text-xs mt-1">Response: {"status": "ok", "path": "..."}</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/hosts/export/download', '', 'Download host list as JSON file', 'GET /api/hosts/export/download')">
+            <div class="text-desert-cyan font-bold">GET /api/hosts/export/download</div>
+            <div class="text-desert-tan text-xs mt-1">Download host list as JSON file</div>
+            <div class="text-desert-tan text-xs mt-1">Response: application/json file download</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET|POST', '/api/hosts/import/internal', '', 'Restore from most recent internal backup', 'GET|POST /api/hosts/import/internal')">
+            <div class="text-desert-cyan font-bold">GET|POST /api/hosts/import/internal</div>
+            <div class="text-desert-tan text-xs mt-1">Restore from most recent internal backup</div>
+            <div class="text-desert-tan text-xs mt-1">Response: {"status": "ok", "source": "..."}</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/import/upload', '', 'Upload and restore from JSON file', 'POST /api/hosts/import/upload')">
+            <div class="text-desert-green font-bold">POST /api/hosts/import/upload</div>
+            <div class="text-desert-tan text-xs mt-1">Upload and restore from JSON file</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/backups/list', '', 'List all available backup files', 'GET /api/backups/list')">
+            <div class="text-desert-cyan font-bold">GET /api/backups/list</div>
+            <div class="text-desert-tan text-xs mt-1">List all available backup files</div>
+            <div class="text-desert-tan text-xs mt-1">Response: [{"filename": "...", "timestamp": "...", "size": ...}]</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/backups/restore', 'file=...', 'Restore from a specific backup file', 'POST /api/backups/restore?file=...')">
+            <div class="text-desert-green font-bold">POST /api/backups/restore?file=...</div>
+            <div class="text-desert-tan text-xs mt-1">Restore from a specific backup file</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('ANY', '/api/proxy/anthias', 'ip=...&path=...', 'Proxy requests to Anthias devices (CORS bypass)', 'ANY /api/proxy/anthias?ip=...&path=...')">
+            <div class="text-desert-cyan font-bold">ANY /api/proxy/anthias?ip=...&path=...</div>
+            <div class="text-desert-tan text-xs mt-1">Proxy requests to Anthias devices (CORS bypass)</div>
+            <div class="text-desert-tan text-xs mt-1">Response: Proxied response</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/receive', '', 'Receive pushed host list from another host', 'POST /api/hosts/receive')">
+            <div class="text-desert-green font-bold">POST /api/hosts/receive</div>
+            <div class="text-desert-tan text-xs mt-1">Receive pushed host list from another host</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/push', '', 'Push current host list to all other hosts', 'POST /api/hosts/push')">
+            <div class="text-desert-green font-bold">POST /api/hosts/push</div>
+            <div class="text-desert-tan text-xs mt-1">Push current host list to all other hosts</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/reboot', '', 'Reboot a host (forwarded if not local)', 'POST /api/hosts/reboot')">
+            <div class="text-desert-green font-bold">POST /api/hosts/reboot</div>
+            <div class="text-desert-tan text-xs mt-1">Reboot a host (forwarded if not local)</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/upgrade', '', 'Run package upgrade on a host (forwarded if not local)', 'POST /api/hosts/upgrade')">
+            <div class="text-desert-green font-bold">POST /api/hosts/upgrade</div>
+            <div class="text-desert-tan text-xs mt-1">Run package upgrade on a host (forwarded if not local)</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/announce', '', 'Announce presence to a peer', 'POST /api/hosts/announce')">
+            <div class="text-desert-green font-bold">POST /api/hosts/announce</div>
+            <div class="text-desert-tan text-xs mt-1">Announce presence to a peer</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/lock', '', 'Lock a host for editing', 'POST /api/hosts/lock')">
+            <div class="text-desert-green font-bold">POST /api/hosts/lock</div>
+            <div class="text-desert-tan text-xs mt-1">Lock a host for editing</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/unlock', '', 'Unlock a host', 'POST /api/hosts/unlock')">
+            <div class="text-desert-green font-bold">POST /api/hosts/unlock</div>
+            <div class="text-desert-tan text-xs mt-1">Unlock a host</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/discovery/scan', '', 'Scan local network for other NSM instances', 'POST /api/discovery/scan')">
+            <div class="text-desert-green font-bold">POST /api/discovery/scan</div>
+            <div class="text-desert-tan text-xs mt-1">Scan local network for other NSM instances</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/health', '', 'Returns server health status', 'GET /api/health')">
+            <div class="text-desert-cyan font-bold">GET /api/health</div>
+            <div class="text-desert-tan text-xs mt-1">Returns server health status</div>
+            <div class="text-desert-tan text-xs mt-1">Response: {"status": "ok"}</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/version', '', 'Returns NSM version and node ID', 'GET /api/version')">
+            <div class="text-desert-cyan font-bold">GET /api/version</div>
+            <div class="text-desert-tan text-xs mt-1">Returns NSM version and node ID</div>
+            <div class="text-desert-tan text-xs mt-1">Response: {"version": "...", "status": "ok", "id": "..."}</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/host/local', '', 'Returns metadata for this specific host', 'GET /api/host/local')">
+            <div class="text-desert-cyan font-bold">GET /api/host/local</div>
+            <div class="text-desert-tan text-xs mt-1">Returns metadata for this specific host</div>
+            <div class="text-desert-tan text-xs mt-1">Response: Host object with full details</div>
+          </div>
+          <div class="border-l-2 border-desert-cyan pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('GET', '/api/hosts', '', 'Get all hosts in the fleet', 'GET /api/hosts')">
+            <div class="text-desert-cyan font-bold">GET /api/hosts</div>
+            <div class="text-desert-tan text-xs mt-1">Get all hosts in the fleet</div>
+            <div class="text-desert-tan text-xs mt-1">Response: Array of Host objects</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/add', '', 'Add a new host to the fleet', 'POST /api/hosts/add')">
+            <div class="text-desert-green font-bold">POST /api/hosts/add</div>
+            <div class="text-desert-tan text-xs mt-1">Add a new host to the fleet</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/update', '', 'Update an existing host', 'POST /api/hosts/update')">
+            <div class="text-desert-green font-bold">POST /api/hosts/update</div>
+            <div class="text-desert-tan text-xs mt-1">Update an existing host</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/delete', 'ip=...', 'Delete a host from the fleet', 'POST /api/hosts/delete?ip=...')">
+            <div class="text-desert-green font-bold">POST /api/hosts/delete?ip=...</div>
+            <div class="text-desert-tan text-xs mt-1">Delete a host from the fleet</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/set-primary', 'id=...', 'Set a host as primary and remove duplicates', 'POST /api/hosts/set-primary?id=...')">
+            <div class="text-desert-green font-bold">POST /api/hosts/set-primary?id=...</div>
+            <div class="text-desert-tan text-xs mt-1">Set a host as primary and remove duplicates</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/check', '', 'Trigger health check on all hosts', 'POST /api/hosts/check')">
+            <div class="text-desert-green font-bold">POST /api/hosts/check</div>
+            <div class="text-desert-tan text-xs mt-1">Trigger health check on all hosts</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
+          <div class="border-l-2 border-desert-green pl-3 cursor-pointer hover:bg-desert-darkgray transition-colors p-2 rounded"
+               onclick="selectEndpoint('POST', '/api/hosts/check-one', 'ip=...', 'Trigger health check for a specific host', 'POST /api/hosts/check-one?ip=...')">
+            <div class="text-desert-green font-bold">POST /api/hosts/check-one?ip=...</div>
+            <div class="text-desert-tan text-xs mt-1">Trigger health check for a specific host</div>
+            <div class="text-desert-tan text-xs mt-1">Response: 204 No Content</div>
+          </div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Sidebar: Interactive Console -->
+  <div class="w-80 flex-none hidden md:block">
+    <div class="sticky top-4 bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
+      <h3 class="font-medium mb-3 text-desert-yellow">Try It Out</h3>
+      
+      <div id="console-empty" class="text-desert-gray text-sm italic text-center py-8">
+        Select an endpoint to test
+      </div>
+
+      <div id="console-form" class="hidden space-y-4">
+        <div>
+          <div class="text-xs text-desert-tan font-mono mb-1">Endpoint</div>
+          <div id="console-route" class="text-sm font-bold text-desert-fg break-all"></div>
+          <div id="console-desc" class="text-xs text-desert-gray mt-1"></div>
+        </div>
+
+        <form id="api-form" onsubmit="submitRequest(event)" target="_blank" class="space-y-3">
+          <input type="hidden" id="method" name="_method">
+          <input type="hidden" id="path" name="_path">
+
+          <div id="params-container" class="space-y-2">
+            <!-- Params injected here -->
+          </div>
+
+          <div id="body-container" class="hidden">
+            <label class="block text-xs text-desert-tan mb-1">Request Body (JSON)</label>
+            <textarea id="json-body" class="w-full h-32 bg-desert-bg text-desert-fg text-xs font-mono p-2 rounded border border-desert-gray focus:border-desert-yellow outline-none" placeholder="{}"></textarea>
+          </div>
+
+          <button type="submit" class="w-full bg-desert-yellow text-desert-bg font-bold py-2 px-4 rounded hover:bg-desert-orange transition-colors text-sm">
+            Send Request
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
 </div>
+

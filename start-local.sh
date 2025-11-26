@@ -6,6 +6,7 @@ set -e
 cd "$(dirname "$0")"
 
 go mod tidy
+go run cmd/docgen/main.go
 go build
 
 echo "Starting nexSign mini..."

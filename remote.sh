@@ -1,6 +1,6 @@
 #!/bin/bash
 # Manage NSM services on remote hosts
-# Usage: ./manage-remote.sh [start|stop|status|logs|restart] [host_ip...]
+# Usage: ./remote.sh [start|stop|status|logs|restart|deploy] [host_ip...]
 
 set -e
 
@@ -10,7 +10,7 @@ shift 2>/dev/null || true
 # Configuration
 SSH_KEY="$HOME/.ssh/nsm-vbox.key"
 SSH_USER="nsm"
-REMOTE_DIR="/home/nsm"
+REMOTE_DIR="/home/nsm/nsm-app"
 
 # Default hosts
 DEFAULT_HOSTS=(
@@ -50,6 +50,11 @@ case "$ACTION" in
         $0 stop "${HOSTS[@]}"
         sleep 2
         $0 start "${HOSTS[@]}"
+        ;;
+
+    deploy)
+        echo "=== Deploying NSM to all hosts ==="
+        go run cmd/deployer/main.go --hosts all --parallel 4
         ;;
     
     logs)
