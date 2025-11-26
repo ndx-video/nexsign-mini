@@ -1,4 +1,3 @@
-// Package hosts provides host list management backed by SQLite.
 package hosts
 
 import (
@@ -198,13 +197,22 @@ func (s *Store) restoreLatestBackup() error {
 	}
 
 	latest := backups[len(backups)-1]
+	return s.RestoreFrom(latest.path)
+}
+
+// RestoreFrom restores the database from a specific backup file.
+func (s *Store) RestoreFrom(path string) error {
 	if err := s.resetDatabaseFiles(); err != nil {
 		return err
 	}
-	if err := copyFile(latest.path, s.file); err != nil {
-		return fmt.Errorf("copy backup %s: %w", filepath.Base(latest.path), err)
+	if err := copyFile(path, s.file); err != nil {
+		return fmt.Errorf("copy backup %s: %w", filepath.Base(path), err)
 	}
-	return s.openDB()
+	if err := s.openDB(); err != nil {
+		return err
+	}
+	s.notify()
+	return nil
 }
 
 func (s *Store) listBackups(prefix, ext string) ([]backupInfo, error) {

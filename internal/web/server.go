@@ -5,23 +5,20 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"nexsign.mini/nsm/internal/api"
 	"nexsign.mini/nsm/internal/anthias"
-	"nexsign.mini/nsm/internal/discovery"
+	"nexsign.mini/nsm/internal/docs"
 	"nexsign.mini/nsm/internal/hosts"
 	"nexsign.mini/nsm/internal/logger"
 	"nexsign.mini/nsm/internal/types"
@@ -38,6 +35,9 @@ type TemplateData struct {
 	EnvVarSet          bool
 	DuplicateHostnames map[string]bool
 	EditLocks          map[string]string // hostID -> editorID
+	DocList            []string
+	DocContent         template.HTML
+	CurrentDoc         string
 }
 
 // sseBroker manages SSE connections for broadcasting host updates
@@ -87,6 +87,8 @@ type Server struct {
 	sseBroker  *sseBroker
 	editLocks  map[string]string // hostID -> editorID
 	editMu     sync.RWMutex
+	apiService *api.Service
+	docService *docs.Service
 }
 
 // NewServer creates a new web server.
@@ -96,14 +98,20 @@ func NewServer(store *hosts.Store, anthiasClient *anthias.Client, port int) (*Se
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
+	logger := logger.New(200) // Keep last 200 messages
+	apiService := api.NewService(store, anthiasClient, logger)
+	docService := docs.NewService("internal/docs")
+
 	s := &Server{
-		store:     store,
-		anthias:   anthiasClient,
-		port:      port,
-		templates: templates,
-		logger:    logger.New(200), // Keep last 200 messages
-		sseBroker: newSSEBroker(),
-		editLocks: make(map[string]string),
+		store:      store,
+		anthias:    anthiasClient,
+		port:       port,
+		templates:  templates,
+		logger:     logger,
+		sseBroker:  newSSEBroker(),
+		editLocks:  make(map[string]string),
+		apiService: apiService,
+		docService: docService,
 	}
 	
 	// Log server initialization
@@ -133,33 +141,35 @@ func (s *Server) Start() <-chan error {
 	mux.HandleFunc("/views/home", s.handleHomeView)
 	mux.HandleFunc("/views/advanced", s.handleAdvancedView)
 	mux.HandleFunc("/views/api", s.handleAPIView)
+	mux.HandleFunc("/views/docs", s.handleDocsView)
 
-	// API routes
-	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/version", s.handleVersion)
-	mux.HandleFunc("/api/host/local", s.handleGetLocalHost)
-	mux.HandleFunc("/api/hosts", s.handleGetHosts)
-	mux.HandleFunc("/api/hosts/add", s.handleAddHost)
-	mux.HandleFunc("/api/hosts/update", s.handleUpdateHost)
-	mux.HandleFunc("/api/hosts/delete", s.handleDeleteHost)
-	mux.HandleFunc("/api/hosts/set-primary", s.handleSetPrimaryHost)
-	mux.HandleFunc("/api/hosts/check", s.handleCheckHosts)
-	mux.HandleFunc("/api/hosts/stream", s.handleHostsStream)
-	mux.HandleFunc("/api/hosts/announce", s.handleAnnounceHost)
-	mux.HandleFunc("/api/hosts/lock", s.handleLockHost)
-	mux.HandleFunc("/api/hosts/unlock", s.handleUnlockHost)
-	mux.HandleFunc("/api/hosts/push", s.handlePushHosts)
-	mux.HandleFunc("/api/hosts/receive", s.handleReceiveHosts)
-	mux.HandleFunc("/api/hosts/reboot", s.handleRebootHost)
-	mux.HandleFunc("/api/hosts/upgrade", s.handleUpgradeHost)
-	mux.HandleFunc("/api/hosts/export/internal", s.handleExportInternal)
-	mux.HandleFunc("/api/hosts/export/download", s.handleExportDownload)
-	mux.HandleFunc("/api/hosts/import/internal", s.handleImportInternal)
-	mux.HandleFunc("/api/hosts/import/upload", s.handleImportUpload)
-	mux.HandleFunc("/api/backups/list", s.handleListBackups)
-	mux.HandleFunc("/api/backups/restore", s.handleRestoreBackup)
-	mux.HandleFunc("/api/discovery/scan", s.handleDiscoveryScan)
-	mux.HandleFunc("/api/proxy/anthias", s.handleAnthiasProxy)
+	// API routes (delegated to apiService)
+	mux.HandleFunc("/api/health", s.apiService.HandleHealth)
+	mux.HandleFunc("/api/version", s.apiService.HandleVersion)
+	mux.HandleFunc("/api/host/local", s.apiService.HandleHostLocal)
+	mux.HandleFunc("/api/hosts", s.apiService.HandleHosts)
+	mux.HandleFunc("/api/hosts/add", s.handleAddHost) // Kept local for pushToOnlinePeers
+	mux.HandleFunc("/api/hosts/update", s.handleUpdateHost) // Kept local for pushToOnlinePeers
+	mux.HandleFunc("/api/hosts/delete", s.apiService.HandleDeleteHost)
+	mux.HandleFunc("/api/hosts/set-primary", s.apiService.HandleSetPrimaryHost)
+	mux.HandleFunc("/api/hosts/check", s.apiService.HandleCheckHosts)
+	mux.HandleFunc("/api/hosts/check-one", s.apiService.HandleCheckHost)
+	mux.HandleFunc("/api/hosts/stream", s.handleHostsStream) // Kept in web for SSE logic
+	mux.HandleFunc("/api/hosts/announce", s.apiService.HandleAnnounceHost)
+	mux.HandleFunc("/api/hosts/lock", s.handleLockHost) // Kept local for editLocks
+	mux.HandleFunc("/api/hosts/unlock", s.handleUnlockHost) // Kept local for editLocks
+	mux.HandleFunc("/api/hosts/push", s.apiService.HandlePushHosts)
+	mux.HandleFunc("/api/hosts/receive", s.apiService.HandleReceiveHosts)
+	mux.HandleFunc("/api/hosts/reboot", s.apiService.HandleRebootHost)
+	mux.HandleFunc("/api/hosts/upgrade", s.apiService.HandleUpgradeHost)
+	mux.HandleFunc("/api/hosts/export/internal", s.apiService.HandleExportInternal)
+	mux.HandleFunc("/api/hosts/export/download", s.apiService.HandleExportDownload)
+	mux.HandleFunc("/api/hosts/import/internal", s.apiService.HandleImportInternal)
+	mux.HandleFunc("/api/hosts/import/upload", s.apiService.HandleImportUpload)
+	mux.HandleFunc("/api/backups/list", s.apiService.HandleBackupsList)
+	mux.HandleFunc("/api/backups/restore", s.apiService.HandleRestoreBackup)
+	mux.HandleFunc("/api/discovery/scan", s.apiService.HandleDiscoveryScan)
+	mux.HandleFunc("/api/proxy/anthias", s.apiService.HandleProxyAnthias)
 	
 	// WebSocket routes
 	mux.HandleFunc("/ws/diagnostics", s.handleDiagnosticsWS)
@@ -266,6 +276,7 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setCacheHeaders(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -273,7 +284,7 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
 	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
-	
+
 	lines := strings.Split(buf.String(), "\n")
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -285,9 +296,6 @@ func (s *Server) handleHomeView(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
 	s.setCacheHeaders(w)
 
 	var buf bytes.Buffer
@@ -300,9 +308,14 @@ func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setCacheHeaders(w)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
 	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
 	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
-	
+
 	lines := strings.Split(buf.String(), "\n")
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -314,9 +327,6 @@ func (s *Server) handleAdvancedView(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIView(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
 	s.setCacheHeaders(w)
 
 	var buf bytes.Buffer
@@ -329,9 +339,14 @@ func (s *Server) handleAPIView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setCacheHeaders(w)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
 	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
 	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
-	
+
 	lines := strings.Split(buf.String(), "\n")
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -342,55 +357,56 @@ func (s *Server) handleAPIView(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "data: fragments </div>\n\n")
 }
 
-// Health check endpoint
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
+func (s *Server) handleDocsView(w http.ResponseWriter, r *http.Request) {
+	s.setCacheHeaders(w)
 
-// handleVersion returns the current NSM version and Host ID
-func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	
-	// Get local ID
-	var id string
-	if meta, err := s.anthias.GetMetadata(); err == nil {
-		id = meta.ID
+	docName := r.URL.Query().Get("doc")
+	docList, _ := s.docService.ListDocs()
+
+	var docContent string
+	if docName != "" {
+		content, err := s.docService.GetDoc(r.Context(), docName)
+		if err == nil {
+			docContent = content
+		} else {
+			s.logger.Error(fmt.Sprintf("Failed to load doc %s: %v", docName, err))
+		}
+	} else if len(docList) > 0 {
+		// Default to first doc if none selected
+		// docName = docList[0]
+		// content, _ := s.docService.GetDoc(r.Context(), docName)
+		// docContent = content
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"version": types.Version,
-		"status":  "ok",
-		"id":      id,
-	})
-}
-
-// handleGetLocalHost returns the metadata of this specific host
-func (s *Server) handleGetLocalHost(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	
-	meta, err := s.anthias.GetMetadata()
-	if err != nil {
-		http.Error(w, "Failed to get local metadata", http.StatusInternalServerError)
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "docs-view.html", TemplateData{
+		CurrentVersion: types.Version,
+		BuildTime:      types.BuildTime,
+		DocList:        docList,
+		DocContent:     template.HTML(docContent),
+		CurrentDoc:     docName,
+	}); err != nil {
+		log.Printf("Error executing docs-view template: %s", err)
+		http.Error(w, "Failed to render view", http.StatusInternalServerError)
 		return
 	}
 
-	// Try to get stored version to include any user customizations (Nickname, etc)
-	if stored, err := s.store.GetByID(meta.ID); err == nil {
-		json.NewEncoder(w).Encode(stored)
-		return
-	}
+	s.setCacheHeaders(w)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
 
-	// Fallback to raw metadata
-	json.NewEncoder(w).Encode(meta)
-}
+	fmt.Fprintf(w, "event: datastar-merge-fragments\n")
+	fmt.Fprintf(w, "data: fragments <div id=\"content-area\">\n")
 
-func (s *Server) handleGetHosts(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.store.GetAll()); err != nil {
-		log.Printf("Error encoding hosts to JSON: %s", err)
-		http.Error(w, "Failed to retrieve host list", http.StatusInternalServerError)
+	lines := strings.Split(buf.String(), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fmt.Fprintf(w, "data: fragments %s\n", line)
 	}
+	fmt.Fprintf(w, "data: fragments </div>\n\n")
 }
 
 // handleAddHost adds a new host to the list
@@ -458,7 +474,8 @@ func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info(fmt.Sprintf("Added new host: %s (%s)", ip, nickname))
+	s.logger.Info(fmt.Sprintf("API: Added new host: %s (%s)", ip, nickname))
+	log.Printf("Added new host: %s (%s)", ip, nickname)
 
 	// Auto-push to online peers
 	go s.pushToOnlinePeers(host)
@@ -565,7 +582,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info(fmt.Sprintf("Updated host: %s -> %s", updateReq.OldIP, newIP))
+	s.logger.Info(fmt.Sprintf("API: Updated host: %s -> %s", updateReq.OldIP, newIP))
 
 	if updatedHost, getErr := s.store.GetByIP(newIP); getErr == nil {
 		// Auto-push to online peers
@@ -588,85 +605,6 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleDeleteHost removes a host from the list
-func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	ip := r.URL.Query().Get("ip")
-	if ip == "" {
-		http.Error(w, "IP address parameter required", http.StatusBadRequest)
-		return
-	}
-
-	if err := s.store.Delete(ip); err != nil {
-		log.Printf("Error deleting host: %s", err)
-		s.logger.Error(fmt.Sprintf("Failed to delete host %s: %v", ip, err))
-		http.Error(w, "Failed to delete host", http.StatusNotFound)
-		return
-	}
-
-	s.logger.Info(fmt.Sprintf("Deleted host: %s", ip))
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// handleSetPrimaryHost sets the selected host as primary and removes duplicates
-func (s *Server) handleSetPrimaryHost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "ID parameter required", http.StatusBadRequest)
-		return
-	}
-
-	// Get the target host
-	target, err := s.store.GetByID(id)
-	if err != nil {
-		http.Error(w, "Host not found", http.StatusNotFound)
-		return
-	}
-
-	if target.Hostname == "" || target.Hostname == "localhost" || target.Hostname == "unknown" {
-		http.Error(w, "Cannot set primary for host with invalid hostname", http.StatusBadRequest)
-		return
-	}
-
-	// Find all hosts with same hostname
-	allHosts := s.store.GetAll()
-	deletedCount := 0
-	for _, h := range allHosts {
-		if h.Hostname == target.Hostname && h.ID != target.ID {
-			if err := s.store.Delete(h.IPAddress); err != nil {
-				log.Printf("Failed to delete duplicate host %s: %v", h.IPAddress, err)
-			} else {
-				deletedCount++
-			}
-		}
-	}
-
-	log.Printf("Set %s (%s) as primary for hostname %s. Deleted %d duplicates.", target.IPAddress, target.ID, target.Hostname, deletedCount)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// handleCheckHosts triggers health check on all hosts
-func (s *Server) handleCheckHosts(w http.ResponseWriter, r *http.Request) {
-	// Datastar action can be a GET or POST.
-	// If triggered via @post('/api/hosts/check'), it expects a response.
-	// We can just return 204 No Content or empty body, as the update will come via SSE.
-	go s.store.CheckAllHosts()
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // watchHostUpdates listens for host changes and broadcasts them to all SSE clients
 func (s *Server) watchHostUpdates() {
 	updates := s.store.Updates()
@@ -677,6 +615,63 @@ func (s *Server) watchHostUpdates() {
 			s.sseBroker.broadcast(data)
 		}
 	}
+}
+
+// bufferResponseWriter is a mock http.ResponseWriter that captures output to a buffer
+// It implements http.ResponseWriter and http.Flusher for compatibility with the datastar SDK
+type bufferResponseWriter struct {
+	header http.Header
+	buf    bytes.Buffer
+	status int
+}
+
+func newBufferResponseWriter() *bufferResponseWriter {
+	return &bufferResponseWriter{
+		header: make(http.Header),
+		status: http.StatusOK,
+	}
+}
+
+func (b *bufferResponseWriter) Header() http.Header {
+	return b.header
+}
+
+func (b *bufferResponseWriter) Write(data []byte) (int, error) {
+	return b.buf.Write(data)
+}
+
+func (b *bufferResponseWriter) WriteHeader(statusCode int) {
+	b.status = statusCode
+}
+
+func (b *bufferResponseWriter) Flush() {
+	// No-op for buffer writer
+}
+
+// formatSSEEvent formats an HTML element as a datastar SSE event
+// Uses datastar-merge-fragments format (client expects this format)
+func formatSSEEvent(htmlContent string, selectorID string) ([]byte, error) {
+
+	// Create a buffer-based response writer
+	bufWriter := newBufferResponseWriter()
+
+	// Use the SDK to send merge-fragments event
+	bufWriter.Header().Set("Content-Type", "text/event-stream")
+	bufWriter.Header().Set("Cache-Control", "no-cache")
+	bufWriter.Header().Set("Connection", "keep-alive")
+
+	fmt.Fprintf(bufWriter, "event: datastar-merge-fragments\n")
+
+	lines := strings.Split(htmlContent, "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fmt.Fprintf(bufWriter, "data: fragments %s\n", line)
+	}
+	fmt.Fprintf(bufWriter, "\n")
+
+	return bufWriter.buf.Bytes(), nil
 }
 
 // renderHostListFragment creates the SSE-formatted fragment for host list updates
@@ -727,20 +722,17 @@ func (s *Server) renderHostListFragment() []byte {
 		return nil
 	}
 
-	// Format as Datastar SSE event - wrap the tbody content with ID for targeted replacement
-	var result bytes.Buffer
-	fmt.Fprintf(&result, "event: datastar-merge-fragments\n")
+	// Wrap content in tbody with matching ID for datastar to target
+	content := "<tbody id=\"host_table_body\" class=\"divide-y divide-desert-gray\">" + buf.String() + "</tbody>"
 	
-	lines := strings.Split(buf.String(), "\n")
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fmt.Fprintf(&result, "data: fragments %s\n", line)
+	// Use SDK to format the SSE event
+	eventBytes, err := formatSSEEvent(content, "host_table_body")
+	if err != nil {
+		log.Printf("Error formatting SSE event: %v", err)
+		return nil
 	}
-	fmt.Fprintf(&result, "\n")
 	
-	return result.Bytes()
+	return eventBytes
 }
 
 // handleHostsStream establishes an SSE connection and streams host list updates
@@ -1082,806 +1074,7 @@ func (s *Server) announceLockToPeers(hostID, editorID string, isLock bool) {
 	}
 }
 
-// handlePushHosts pushes the current host list to all other hosts
-func (s *Server) handlePushHosts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
-	// Optional list of specific target IPs to push to
-	var req struct {
-		Targets []string `json:"targets"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	targetSet := map[string]struct{}{}
-	for _, t := range req.Targets {
-		t = strings.TrimSpace(t)
-		if t != "" {
-			targetSet[t] = struct{}{}
-		}
-	}
-
-	allHosts := s.store.GetAll()
-	hostListJSON, err := json.Marshal(allHosts)
-	if err != nil {
-		http.Error(w, "Failed to marshal host list", http.StatusInternalServerError)
-		return
-	}
-
-	results := make(map[string]string)
-
-	// Push to each host (except localhost)
-	for _, host := range allHosts {
-		if host.IPAddress == "127.0.0.1" {
-			continue
-		}
-
-		// If a target list is provided, only include those
-		if len(targetSet) > 0 {
-			if _, ok := targetSet[host.IPAddress]; !ok {
-				continue
-			}
-		}
-
-		go func(h types.Host) {
-			url := fmt.Sprintf("http://%s:8080/api/hosts/receive", h.IPAddress)
-			resp, err := http.Post(url, "application/json", bytes.NewBuffer(hostListJSON))
-			if err != nil {
-				log.Printf("Failed to push to %s: %v", h.IPAddress, err)
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				log.Printf("Successfully pushed host list to %s", h.IPAddress)
-			} else {
-				log.Printf("Failed to push to %s: HTTP %d", h.IPAddress, resp.StatusCode)
-			}
-		}(host)
-
-		results[host.IPAddress] = "pushed"
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "ok",
-		"results": results,
-	})
-}
-
-// handleReceiveHosts receives pushed host list from another host
-func (s *Server) handleReceiveHosts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var hosts []types.Host
-	if err := json.NewDecoder(r.Body).Decode(&hosts); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	merge := r.URL.Query().Get("merge") == "true"
-
-	if merge {
-		// Merge mode: Upsert received hosts, do not delete anything
-		count := 0
-		for _, h := range hosts {
-			if err := s.store.Upsert(h); err != nil {
-				log.Printf("Error merging host %s: %v", h.ID, err)
-			} else {
-				count++
-			}
-		}
-		log.Printf("Merged %d hosts from remote announcement", count)
-	} else {
-		// Replace mode: Overwrite entire host list (default for "Push to fleet")
-		backupPath, err := s.store.BackupCurrent(20)
-		if err != nil {
-			log.Printf("Error creating host backup: %v", err)
-			http.Error(w, "Failed to backup existing host list", http.StatusInternalServerError)
-			return
-		}
-
-		if err := s.store.ReplaceAll(hosts); err != nil {
-			log.Printf("Error replacing host list: %s", err)
-			http.Error(w, "Failed to update host list", http.StatusInternalServerError)
-			return
-		}
-
-		if backupPath != "" {
-			log.Printf("Received host list; previous copy moved to %s (count: %d)", backupPath, len(hosts))
-		} else {
-			log.Printf("Received host list from remote host (count: %d)", len(hosts))
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// handleRebootHost handles reboot requests for hosts
-func (s *Server) handleRebootHost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get the target IP and origin from request
-	var req struct {
-		TargetIP string `json:"target_ip"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.TargetIP == "" {
-		http.Error(w, "target_ip is required", http.StatusBadRequest)
-		return
-	}
-
-	// Get the origin IP from the request
-	originIP := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(originIP); err == nil {
-		originIP = host
-	}
-
-	// If the target is localhost, execute the reboot
-	localHost, err := s.anthias.GetMetadata()
-	if err != nil {
-		log.Printf("Error getting local metadata: %v", err)
-		http.Error(w, "Failed to determine local host", http.StatusInternalServerError)
-		return
-	}
-
-	if req.TargetIP == localHost.IPAddress || req.TargetIP == "127.0.0.1" {
-		// This is a reboot request for THIS host
-		log.Printf("REBOOT REQUEST received from %s for local host %s", originIP, req.TargetIP)
-
-		// Execute the reboot sequence
-		go func() {
-			log.Println("Initiating safe reboot sequence...")
-			log.Println("Step 1: Stopping Docker engine...")
-
-			// Stop docker engine
-			if err := exec.Command("systemctl", "stop", "docker").Run(); err != nil {
-				log.Printf("Warning: Failed to stop docker: %v", err)
-			}
-
-			time.Sleep(2 * time.Second)
-
-			log.Println("Step 2: Requesting system reboot...")
-
-			// Reboot the system
-			if err := exec.Command("systemctl", "reboot").Run(); err != nil {
-				log.Printf("Error: Failed to initiate reboot: %v", err)
-			}
-		}()
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "rebooting",
-			"message": "Reboot sequence initiated",
-		})
-		return
-	}
-
-	// Forward the reboot request to the target host
-	targetURL := fmt.Sprintf("http://%s:8080/api/hosts/reboot", req.TargetIP)
-	reqBody, _ := json.Marshal(req)
-
-	resp, err := http.Post(targetURL, "application/json", bytes.NewBuffer(reqBody))
-	if err != nil {
-		log.Printf("Failed to forward reboot request to %s: %v", req.TargetIP, err)
-		http.Error(w, "Failed to reach target host", http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Forward the response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-// handleUpgradeHost handles package upgrade requests for hosts
-func (s *Server) handleUpgradeHost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get the target IP and origin from request
-	var req struct {
-		TargetIP string `json:"target_ip"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.TargetIP == "" {
-		http.Error(w, "target_ip is required", http.StatusBadRequest)
-		return
-	}
-
-	// Get the origin IP from the request
-	originIP := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(originIP); err == nil {
-		originIP = host
-	}
-
-	// If the target is localhost, execute the upgrade
-	localHost, err := s.anthias.GetMetadata()
-	if err != nil {
-		log.Printf("Error getting local metadata: %v", err)
-		http.Error(w, "Failed to determine local host", http.StatusInternalServerError)
-		return
-	}
-
-	if req.TargetIP == localHost.IPAddress || req.TargetIP == "127.0.0.1" {
-		// This is an upgrade request for THIS host
-		log.Printf("UPGRADE REQUEST received from %s for local host %s", originIP, req.TargetIP)
-
-		// Execute the upgrade sequence
-		go func() {
-			log.Println("Initiating package upgrade sequence...")
-			log.Println("Step 1: Running apt update...")
-
-			// Run apt update
-			if err := exec.Command("apt", "update").Run(); err != nil {
-				log.Printf("Warning: Failed to run apt update: %v", err)
-			}
-
-			log.Println("Step 2: Running apt upgrade...")
-
-			// Run apt upgrade -y
-			if err := exec.Command("apt", "upgrade", "-y").Run(); err != nil {
-				log.Printf("Error: Failed to run apt upgrade: %v", err)
-			}
-
-			log.Println("Package upgrade complete. Service will restart if nsm was updated.")
-		}()
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "upgrading",
-			"message": "Package upgrade initiated",
-		})
-		return
-	}
-
-	// Forward the upgrade request to the target host
-	targetURL := fmt.Sprintf("http://%s:8080/api/hosts/upgrade", req.TargetIP)
-	reqBody, _ := json.Marshal(req)
-
-	resp, err := http.Post(targetURL, "application/json", bytes.NewBuffer(reqBody))
-	if err != nil {
-		log.Printf("Failed to forward upgrade request to %s: %v", req.TargetIP, err)
-		http.Error(w, "Failed to reach target host", http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Forward the response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-// handleDiscoveryScan initiates a network scan for other NSM instances
-func (s *Server) handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Check for interface override from query param
-	overrideIP := r.URL.Query().Get("interface_ip")
-	if overrideIP == "" {
-		overrideIP = os.Getenv("NSM_HOST_IP")
-	}
-
-	go func() {
-		s.logger.Info("Starting network discovery scan...")
-		scanner := discovery.NewScanner(s.port, overrideIP, s.logger)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		results, err := scanner.Scan(ctx)
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("Discovery scan failed: %v", err))
-			return
-		}
-
-		count := 0
-		for host := range results {
-			// Try to get remote details
-			var remoteHost types.Host
-			client := http.Client{Timeout: 2 * time.Second}
-			resp, err := client.Get(fmt.Sprintf("http://%s:%d/api/host/local", host.IP, host.Port))
-			if err == nil {
-				if json.NewDecoder(resp.Body).Decode(&remoteHost) == nil {
-					// We have full details!
-					// Ensure IP is correct (trust the discovery IP for reachability)
-					remoteHost.IPAddress = host.IP
-					remoteHost.DashboardURL = fmt.Sprintf("http://%s:%d", host.IP, host.Port)
-					
-					// Check for stale entries with same IP but different ID
-					if oldHost, err := s.store.GetByIP(host.IP); err == nil && oldHost.ID != remoteHost.ID {
-						s.logger.Warning(fmt.Sprintf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteHost.ID))
-						s.store.Delete(oldHost.IPAddress)
-					}
-
-					if err := s.store.Upsert(remoteHost); err != nil {
-						s.logger.Error(fmt.Sprintf("Failed to upsert discovered host: %v", err))
-					} else {
-						s.logger.Info(fmt.Sprintf("Discovered and updated host: %s (ID: %s)", host.IP, remoteHost.ID))
-					}
-                    
-                    // Mutual discovery: Push ourselves to them
-                    go func(targetIP string) {
-                        if local, err := s.anthias.GetMetadata(); err == nil {
-                            // Get stored version for full details
-                            if stored, err := s.store.GetByID(local.ID); err == nil {
-                                local = stored
-                            }
-                            // Wrap in list
-                            hosts := []types.Host{*local}
-                            body, _ := json.Marshal(hosts)
-                            http.Post(fmt.Sprintf("http://%s:8080/api/hosts/receive?merge=true", targetIP), "application/json", bytes.NewBuffer(body))
-                        }
-                    }(host.IP)
-				}
-				resp.Body.Close()
-                continue
-			}
-
-			// Fallback for older versions (try /api/version)
-			// ... (keep existing logic or just skip?)
-			// If /api/host/local fails, maybe it's an old version.
-			// Let's keep the old logic as fallback?
-			// The user said "regular checking is not required".
-			// If we fail to get details, we can fall back to "Discovered Host".
-			
-			// Try to get remote ID (fallback)
-			var remoteID string
-			resp, err = client.Get(fmt.Sprintf("http://%s:%d/api/version", host.IP, host.Port))
-			if err == nil {
-				var v struct {
-					ID string `json:"id"`
-				}
-				if json.NewDecoder(resp.Body).Decode(&v) == nil {
-					remoteID = v.ID
-				}
-				resp.Body.Close()
-			}
-
-			// ... (rest of old logic)
-
-			// If we have an ID, check by ID
-			if remoteID != "" {
-				if existing, err := s.store.GetByID(remoteID); err == nil {
-					// Host exists, update IP if changed
-					if existing.IPAddress != host.IP {
-						s.logger.Info(fmt.Sprintf("Host %s moved from %s to %s", remoteID, existing.IPAddress, host.IP))
-						existing.IPAddress = host.IP
-						existing.DashboardURL = fmt.Sprintf("http://%s:%d", host.IP, host.Port)
-						existing.Status = types.StatusUnreachable // Reset status
-						s.store.Upsert(*existing)
-						
-						// Trigger health check
-						go func(h types.Host) {
-							updated := h
-							hosts.CheckHealth(&updated)
-							s.store.Upsert(updated)
-						}(*existing)
-					}
-					continue // Already exists and updated if needed
-				} else {
-					// ID not found in DB. Check if we have a stale host with this IP.
-					if oldHost, err := s.store.GetByIP(host.IP); err == nil {
-						// We have a host at this IP, but with a different ID (since GetByID failed).
-						s.logger.Warning(fmt.Sprintf("Replacing stale host %s (ID: %s) with discovered ID %s", oldHost.IPAddress, oldHost.ID, remoteID))
-						if err := s.store.Delete(oldHost.IPAddress); err != nil {
-							s.logger.Error(fmt.Sprintf("Failed to delete stale host: %v", err))
-						}
-					}
-				}
-			} else {
-				// Fallback to IP check
-				if _, err := s.store.GetByIP(host.IP); err == nil {
-					continue // Already exists by IP
-				}
-			}
-
-			// Add new host
-			newHost := types.Host{
-				ID:            remoteID,
-				Nickname:      "Discovered Host",
-				IPAddress:     host.IP,
-				Status:        types.StatusUnreachable,
-				NSMStatus:     "NSM Offline",
-				NSMVersion:    "unknown",
-				CMSStatus:     types.CMSUnknown,
-				DashboardURL:  fmt.Sprintf("http://%s:%d", host.IP, host.Port),
-				LastChecked:   time.Time{},
-			}
-
-			if err := s.store.Upsert(newHost); err != nil {
-				s.logger.Error(fmt.Sprintf("Failed to add discovered host %s: %v", host.IP, err))
-				continue
-			}
-			count++
-			s.logger.Info(fmt.Sprintf("Discovered and added new host: %s (ID: %s)", host.IP, remoteID))
-
-			// Check health of new host
-			go func(base types.Host) {
-				updated := base
-				hosts.CheckHealth(&updated)
-				if err := s.store.Upsert(updated); err != nil {
-					s.logger.Error(fmt.Sprintf("Error refreshing host %s after update: %v", updated.IPAddress, err))
-				}
-			}(newHost)
-		}
-		s.logger.Info(fmt.Sprintf("Discovery scan complete. Added %d new hosts.", count))
-	}()
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleExportInternal saves the current host list to internal storage
-func (s *Server) handleExportInternal(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	backupPath, err := s.store.BackupCurrent(100) // Keep up to 100 backups
-	if err != nil {
-		log.Printf("Failed to create internal backup: %v", err)
-		http.Error(w, "Failed to save internal backup", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("Created internal backup at: %s", backupPath)
-	s.logger.Info(fmt.Sprintf("Created internal backup at: %s", backupPath))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-		"path":   backupPath,
-	})
-}
-
-// handleExportDownload returns the current host list as a downloadable JSON file
-func (s *Server) handleExportDownload(w http.ResponseWriter, r *http.Request) {
-	allHosts := s.store.GetAll()
-	
-	hostListJSON, err := json.MarshalIndent(allHosts, "", "  ")
-	if err != nil {
-		http.Error(w, "Failed to marshal host list", http.StatusInternalServerError)
-		return
-	}
-
-	filename := fmt.Sprintf("nsm-hosts-%s.json", time.Now().Format("2006-01-02"))
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-	w.Write(hostListJSON)
-}
-
-// handleImportInternal restores the host list from the most recent internal backup
-func (s *Server) handleImportInternal(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Find the most recent backup
-	backupDir := "backups"
-	entries, err := os.ReadDir(backupDir)
-	if err != nil {
-		log.Printf("Failed to read backup directory: %v", err)
-		http.Error(w, "No backups found", http.StatusNotFound)
-		return
-	}
-
-	var latestBackup string
-	var latestTime time.Time
-	
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		
-		name := entry.Name()
-		if !strings.HasPrefix(name, "hosts-") && !strings.HasPrefix(name, "hosts.") {
-			continue
-		}
-		
-		// Accept both .db and .json backup files
-		ext := filepath.Ext(name)
-		if ext != ".db" && ext != ".json" {
-			continue
-		}
-		
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		
-		if info.ModTime().After(latestTime) {
-			latestTime = info.ModTime()
-			latestBackup = name
-		}
-	}
-
-	if latestBackup == "" {
-		http.Error(w, "No backups found", http.StatusNotFound)
-		return
-	}
-
-	backupPath := fmt.Sprintf("%s/%s", backupDir, latestBackup)
-	
-	// Read the backup file
-	data, err := os.ReadFile(backupPath)
-	if err != nil {
-		log.Printf("Failed to read backup file: %v", err)
-		http.Error(w, "Failed to read backup", http.StatusInternalServerError)
-		return
-	}
-
-	// Create a backup of current state before restoring
-	if _, err := s.store.BackupCurrent(100); err != nil {
-		log.Printf("Warning: Failed to backup current state before restore: %v", err)
-	}
-
-	// Check if it's a .db or .json file
-	if strings.HasSuffix(latestBackup, ".db") {
-		// It's a SQLite database backup - use ImportSnapshot
-		if _, err := s.store.ImportSnapshot(data, 100); err != nil {
-			log.Printf("Failed to restore database backup: %v", err)
-			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// It's a JSON backup - parse and replace
-		var hosts []types.Host
-		if err := json.Unmarshal(data, &hosts); err != nil {
-			log.Printf("Failed to unmarshal backup: %v", err)
-			http.Error(w, "Invalid backup file", http.StatusInternalServerError)
-			return
-		}
-		if err := s.store.ReplaceAll(hosts); err != nil {
-			log.Printf("Failed to restore host list: %v", err)
-			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	log.Printf("Restored host list from %s", backupPath)
-	s.logger.Info(fmt.Sprintf("Restored host list from %s", latestBackup))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"source": latestBackup,
-	})
-}
-
-// handleImportUpload accepts an uploaded JSON file and replaces the host list
-func (s *Server) handleImportUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var hosts []types.Host
-	if err := json.NewDecoder(r.Body).Decode(&hosts); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Create a backup of current state before importing
-	backupPath, err := s.store.BackupCurrent(100)
-	if err != nil {
-		log.Printf("Warning: Failed to backup current state before import: %v", err)
-	} else {
-		log.Printf("Created backup at %s before import", backupPath)
-	}
-
-	// Replace the host list
-	if err := s.store.ReplaceAll(hosts); err != nil {
-		log.Printf("Failed to import host list: %v", err)
-		http.Error(w, "Failed to import host list", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("Imported host list from upload (%d hosts)", len(hosts))
-	s.logger.Info(fmt.Sprintf("Imported host list from upload (%d hosts)", len(hosts)))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"count":  len(hosts),
-	})
-}
-
-// handleListBackups returns a list of all available backup files
-func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
-	backupDir := "backups"
-	entries, err := os.ReadDir(backupDir)
-	if err != nil {
-		http.Error(w, "Failed to read backup directory", http.StatusInternalServerError)
-		return
-	}
-
-	type BackupInfo struct {
-		Filename  string `json:"filename"`
-		Timestamp string `json:"timestamp"`
-		Size      int64  `json:"size"`
-	}
-
-	var backups []BackupInfo
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		
-		name := entry.Name()
-		if !strings.HasPrefix(name, "hosts-") && !strings.HasPrefix(name, "hosts.") {
-			continue
-		}
-		
-		// Accept both .db and .json backup files
-		ext := filepath.Ext(name)
-		if ext != ".db" && ext != ".json" {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		backups = append(backups, BackupInfo{
-			Filename:  name,
-			Timestamp: info.ModTime().Format("2006-01-02 15:04:05"),
-			Size:      info.Size(),
-		})
-	}
-
-	// Sort by timestamp descending (newest first)
-	// Since filenames contain timestamp, we can sort by filename in reverse
-	for i, j := 0, len(backups)-1; i < j; i, j = i+1, j-1 {
-		backups[i], backups[j] = backups[j], backups[i]
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(backups)
-}
-
-// handleRestoreBackup restores the host list from a specific backup file
-func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	filename := r.URL.Query().Get("file")
-	if filename == "" {
-		http.Error(w, "Missing 'file' parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Validate filename to prevent directory traversal
-	if strings.Contains(filename, "..") || strings.Contains(filename, "/") {
-		http.Error(w, "Invalid filename", http.StatusBadRequest)
-		return
-	}
-
-	backupPath := fmt.Sprintf("backups/%s", filename)
-
-	// Read the backup file
-	data, err := os.ReadFile(backupPath)
-	if err != nil {
-		log.Printf("Failed to read backup file: %v", err)
-		http.Error(w, "Failed to read backup", http.StatusNotFound)
-		return
-	}
-
-	// Create a backup of current state before restoring
-	if _, err := s.store.BackupCurrent(100); err != nil {
-		log.Printf("Warning: Failed to backup current state before restore: %v", err)
-	}
-
-	// Check if it's a .db or .json file
-	if strings.HasSuffix(filename, ".db") {
-		// It's a SQLite database backup - use ImportSnapshot
-		if _, err := s.store.ImportSnapshot(data, 100); err != nil {
-			log.Printf("Failed to restore database backup: %v", err)
-			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// It's a JSON backup - parse and replace
-		var hosts []types.Host
-		if err := json.Unmarshal(data, &hosts); err != nil {
-			log.Printf("Failed to unmarshal backup: %v", err)
-			http.Error(w, "Invalid backup file", http.StatusInternalServerError)
-			return
-		}
-		if err := s.store.ReplaceAll(hosts); err != nil {
-			log.Printf("Failed to restore host list: %v", err)
-			http.Error(w, "Failed to restore host list", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	log.Printf("Restored host list from %s", backupPath)
-	s.logger.Info(fmt.Sprintf("Restored host list from %s", filename))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"source": filename,
-	})
-}
-
-// handleAnthiasProxy proxies requests to Anthias devices to avoid CORS issues.
-func (s *Server) handleAnthiasProxy(w http.ResponseWriter, r *http.Request) {
-	// Get IP and path from query parameters
-	ip := r.URL.Query().Get("ip")
-	path := r.URL.Query().Get("path")
-
-	if ip == "" || path == "" {
-		http.Error(w, "Missing 'ip' or 'path' parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Build the target URL
-	targetURL := fmt.Sprintf("http://%s%s", ip, path)
-
-	// Create the proxy request
-	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
-	if err != nil {
-		http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
-		return
-	}
-
-	// Copy headers
-	for key, values := range r.Header {
-		for _, value := range values {
-			proxyReq.Header.Add(key, value)
-		}
-	}
-
-	// Make the request
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(proxyReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to reach Anthias device: %v", err), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Copy response headers
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	// Copy status code and body
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
 
 // handleDiagnosticsWS handles WebSocket connections for diagnostics data
 func (s *Server) handleDiagnosticsWS(w http.ResponseWriter, r *http.Request) {
@@ -1934,15 +1127,11 @@ func (s *Server) handleDiagnosticsWS(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Get recent console logs
-			logs := s.logger.GetAll()
-
 			msg := map[string]interface{}{
 				"time":        currentTime,
 				"node_id":     nodeID,
 				"hosts_count": hostCount,
 				"last_backup": lastBackup,
-				"logs":        logs,
 			}
 
 			if err := conn.WriteJSON(msg); err != nil {
@@ -1952,7 +1141,7 @@ func (s *Server) handleDiagnosticsWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStatusWS handles WebSocket connections for status bar messages
+// handleStatusWS handles WebSocket connections for status bar messages and console logs
 func (s *Server) handleStatusWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1961,27 +1150,49 @@ func (s *Server) handleStatusWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ticker := time.NewTicker(1 * time.Second)
+	// Send initial history (last 50 logs)
+	initialLogs := s.logger.GetRecent(50)
+	// Reverse to send oldest first if needed, but client usually appends.
+	// GetRecent returns newest first.
+	for i := len(initialLogs) - 1; i >= 0; i-- {
+		if err := conn.WriteJSON(initialLogs[i]); err != nil {
+			return
+		}
+	}
+
+	ticker := time.NewTicker(500 * time.Millisecond) // Poll faster for responsiveness
 	defer ticker.Stop()
 
-	lastSent := ""
+	var lastLogTime time.Time
+	if len(initialLogs) > 0 {
+		lastLogTime = initialLogs[0].Timestamp
+	}
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			// Get most recent log message
-			recent := s.logger.GetRecent(1)
-			if len(recent) > 0 {
-				msg := recent[0]
-				// Only send if it's different from last sent
-				msgText := msg.Text
-				if msgText != lastSent {
-					if err := conn.WriteJSON(msg); err != nil {
-						return
-					}
-					lastSent = msgText
+			// Get recent logs
+			recent := s.logger.GetRecent(20) // Check last 20
+			
+			// Filter for new logs
+			var newLogs []logger.Message
+			for _, msg := range recent {
+				if msg.Timestamp.After(lastLogTime) {
+					newLogs = append(newLogs, msg)
+				}
+			}
+
+			// Send new logs (oldest first)
+			for i := len(newLogs) - 1; i >= 0; i-- {
+				msg := newLogs[i]
+				if err := conn.WriteJSON(msg); err != nil {
+					return
+				}
+				// Update tracker
+				if msg.Timestamp.After(lastLogTime) {
+					lastLogTime = msg.Timestamp
 				}
 			}
 		}

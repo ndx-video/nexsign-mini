@@ -152,23 +152,49 @@ func checkAnthiasCMSByIP(ip string) (types.AnthiasCMSStatus, int) {
 
 	timeout := 3 * time.Second
 	client := &http.Client{Timeout: timeout}
-	anthiasURL := fmt.Sprintf("http://%s/api/v1/assets?format=json", ip)
-
-	resp, err := client.Get(anthiasURL)
-	if err != nil {
-		return types.CMSOffline, 0
+	
+	// Primary health check using /api/v2/info
+	infoURL := fmt.Sprintf("http://%s/api/v2/info", ip)
+	resp, err := client.Get(infoURL)
+	
+	// If v2 works, we are online
+	if err == nil && resp.StatusCode == http.StatusOK {
+		resp.Body.Close()
+		
+		// Try to get asset count (best effort)
+		assetCount := 0
+		assetsURL := fmt.Sprintf("http://%s/api/v1/assets?format=json", ip)
+		respAssets, err := client.Get(assetsURL)
+		if err == nil {
+			defer respAssets.Body.Close()
+			if respAssets.StatusCode == http.StatusOK {
+				var assets []interface{}
+				if json.NewDecoder(respAssets.Body).Decode(&assets) == nil {
+					assetCount = len(assets)
+				}
+			}
+		}
+		return types.CMSOnline, assetCount
 	}
-	defer resp.Body.Close()
+	
+	if err == nil {
+		resp.Body.Close()
+	}
 
-	if resp.StatusCode == http.StatusOK {
-		var assets []map[string]interface{}
-		decoder := json.NewDecoder(resp.Body)
-
-		if err := decoder.Decode(&assets); err != nil {
+	// Fallback: Try /api/v1/assets directly (for older versions)
+	// If this works, it's also Online
+	assetsURL := fmt.Sprintf("http://%s/api/v1/assets?format=json", ip)
+	resp, err = client.Get(assetsURL)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var assets []interface{}
+			if json.NewDecoder(resp.Body).Decode(&assets) == nil {
+				return types.CMSOnline, len(assets)
+			}
+			// Even if decode fails, if we got 200 OK, it's online
 			return types.CMSOnline, 0
 		}
-
-		return types.CMSOnline, len(assets)
 	}
 
 	return types.CMSOffline, 0
