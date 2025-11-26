@@ -3,7 +3,7 @@
     <div class="text-sm text-desert-tan">Management Dashboard for nexSign mini (NSM) hosts</div>
 </div>
 <div class="host-list" id="host-list-container">
-    <table class="min-w-full overflow-hidden border border-desert-gray">
+    <table class="min-w-full overflow-hidden border border-desert-gray" data-on-load="@get('/api/hosts/stream')">
         <thead>
             <tr class="bg-desert-darkgray text-left text-desert-tan text-xs uppercase">
                 <th class="p-1 font-normal">Name</th>
@@ -15,14 +15,15 @@
                 <th class="p-1 font-normal">Actions</th>
             </tr>
         </thead>
-        <tbody id="host_table_body" data-on-sse="@get('/api/hosts/stream')">
+        <tbody id="host_table_body">
             {{template "host-rows-content" .}}
         </tbody>
     </table>
 </div>
 
 <div class="mt-4 p-3 bg-desert-gray rounded">
-    <form id="add-host-form" name="add-host-form" onsubmit="addHost(event); return false;" class="flex flex-wrap items-center gap-2">
+    <form id="add-host-form" name="add-host-form" onsubmit="addHost(event); return false;"
+        class="flex flex-wrap items-center gap-2">
         <input type="text" id="new-nickname" name="nickname" placeholder="Nickname"
             class="bg-desert-darkgray text-desert-fg px-2 py-1 rounded border border-desert-gray focus:border-desert-cyan w-36" />
         <input type="text" id="new-lan-ip" name="ip_address" required placeholder="LAN IP"

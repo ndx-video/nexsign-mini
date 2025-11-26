@@ -1,0 +1,35 @@
+<div class="h-full flex flex-col">
+  <div class="my-2 text-center">
+    <div class="text-sm font-semibold text-desert-fg">Documentation</div>
+    <div class="text-sm text-desert-tan">Project documentation and guides.</div>
+  </div>
+
+  <div class="flex flex-1 overflow-hidden gap-4">
+    <!-- Sidebar -->
+    <div class="w-64 bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray flex flex-col">
+      <h3 class="font-medium mb-3 text-desert-yellow">Documents</h3>
+      <div class="space-y-1 overflow-y-auto flex-1">
+        {{range .DocList}}
+        <button
+          class="w-full text-left px-3 py-2 rounded text-sm {{if eq . $.CurrentDoc}}bg-desert-yellow text-black{{else}}text-desert-cyan hover:bg-desert-gray{{end}}"
+          data-on-click="@get('/views/docs?doc={{.}}')">
+          📄 {{.}}
+        </button>
+        {{end}}
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 bg-desert-darkgray rounded shadow-lg p-6 border border-desert-gray overflow-y-auto">
+      {{if .DocContent}}
+      <div class="prose prose-invert prose-desert max-w-none">
+        {{.DocContent}}
+      </div>
+      {{else}}
+      <div class="flex items-center justify-center h-full text-desert-gray">
+        <p>Select a document from the sidebar to view.</p>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>

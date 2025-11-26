@@ -10,16 +10,20 @@
       <h3 class="font-medium mb-3 text-desert-yellow">Fleet Synchronization</h3>
       <div class="space-y-3">
         <div class="bg-orange-900/20 border border-orange-700/50 rounded p-2 mb-3">
-          <p class="text-xs text-orange-300">⚠️ <strong>Warning:</strong> These operations will overwrite peer host lists. Individual edits auto-sync automatically.</p>
+          <p class="text-xs text-orange-300">⚠️ <strong>Warning:</strong> These operations will overwrite peer host
+            lists. Individual edits auto-sync automatically.</p>
         </div>
         <div>
-          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange" onclick="pushSelected()">
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange"
+            onclick="pushSelected()">
             🔄 Replace Selected Peer Lists
           </button>
           <p class="text-xs text-desert-gray mt-1 ml-1">Overwrite host lists on checked peers</p>
         </div>
         <div>
-          <button class="w-full text-left px-3 py-2 bg-red-900/50 hover:bg-red-900/70 rounded text-red-400 border border-red-700/50" onclick="if(confirm('⚠️ This will REPLACE the host list on ALL online peers. Are you sure?')) pushAll()">
+          <button
+            class="w-full text-left px-3 py-2 bg-red-900/50 hover:bg-red-900/70 rounded text-red-400 border border-red-700/50"
+            onclick="if(confirm('⚠️ This will REPLACE the host list on ALL online peers. Are you sure?')) pushAll()">
             ☢️ Force Sync All Peers
           </button>
           <p class="text-xs text-desert-gray mt-1 ml-1">Nuclear option: overwrite all peer lists</p>
@@ -29,28 +33,33 @@
 
     <!-- Backup & Restore -->
     <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
-      <h3 class="font-medium mb-3 text-desert-yellow">Backup & Restore <a href="#backup-history" class="text-xs text-desert-cyan hover:text-desert-cyan/80">(history)</a></h3>
+      <h3 class="font-medium mb-3 text-desert-yellow">Backup & Restore <a href="#backup-history"
+          class="text-xs text-desert-cyan hover:text-desert-cyan/80">(history)</a></h3>
       <div class="space-y-3">
         <div>
-          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan" data-on-click="@post('/api/hosts/export/internal');loadBackupHistory()">
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan"
+            onclick="fetch('/api/hosts/export/internal', {method: 'POST'}).then(() => loadBackupHistory())">
             💾 Save Internal
           </button>
           <p class="text-xs text-desert-gray mt-1 ml-1">Save current host list to server storage</p>
         </div>
         <div>
-          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan" onclick="downloadHostList()">
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-cyan"
+            onclick="downloadHostList()">
             ⬇️ Save Download
           </button>
           <p class="text-xs text-desert-gray mt-1 ml-1">Download host list as JSON file</p>
         </div>
         <div class="border-t border-desert-gray pt-3">
-          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange" data-on-click="@post('/api/hosts/import/internal')">
+          <button class="w-full text-left px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange"
+            onclick="fetch('/api/hosts/import/internal', {method: 'POST'}).then(() => window.location.reload())">
             📂 Use Internal Host List
           </button>
           <p class="text-xs text-desert-gray mt-1 ml-1">Restore from server storage</p>
         </div>
         <div>
-          <label class="w-full block px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange cursor-pointer">
+          <label
+            class="w-full block px-3 py-2 bg-desert-gray hover:bg-desert-gray/80 rounded text-desert-orange cursor-pointer">
             ⬆️ Upload Host List
             <input type="file" id="upload-host-list" accept=".json" class="hidden" onchange="uploadHostList(this)">
           </label>
@@ -64,17 +73,22 @@
       <h3 class="font-medium mb-2 text-desert-yellow">Live Node Stats</h3>
       <div id="diag-stats" class="text-sm space-y-1">
         <div><span class="text-desert-tan">Time:</span> <span id="diag-time" class="text-desert-cyan">—</span></div>
-        <div><span class="text-desert-tan">Node ID:</span> <span id="diag-nodeid" class="font-mono text-desert-cyan text-xs">—</span></div>
-        <div><span class="text-desert-tan">Hosts in state:</span> <span id="diag-hosts" class="text-desert-cyan">—</span></div>
-        <div><span class="text-desert-tan">Most recent internal backup:</span> <span id="diag-backup" class="text-desert-cyan text-xs">—</span></div>
-        <div><span class="text-desert-tan">WS status:</span> <span id="diag-ws" class="text-desert-yellow">connecting…</span></div>
+        <div><span class="text-desert-tan">Node ID:</span> <span id="diag-nodeid"
+            class="font-mono text-desert-cyan text-xs">—</span></div>
+        <div><span class="text-desert-tan">Hosts in state:</span> <span id="diag-hosts"
+            class="text-desert-cyan">—</span></div>
+        <div><span class="text-desert-tan">Most recent internal backup:</span> <span id="diag-backup"
+            class="text-desert-cyan text-xs">—</span></div>
+        <div><span class="text-desert-tan">WS status:</span> <span id="diag-ws"
+            class="text-desert-yellow">connecting…</span></div>
       </div>
     </div>
 
     <!-- Console Logs -->
     <div class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
       <h3 class="font-medium mb-2 text-desert-yellow">Console Logs</h3>
-      <div id="console-logs" class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
+      <div id="console-logs"
+        class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
         <div class="text-desert-gray italic">Waiting for log messages...</div>
       </div>
     </div>
@@ -82,7 +96,8 @@
     <!-- Backup History -->
     <div id="backup-history" class="bg-desert-darkgray rounded shadow-lg p-4 border border-desert-gray">
       <h3 class="font-medium mb-2 text-desert-yellow">Backup History</h3>
-      <div id="backup-list" class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
+      <div id="backup-list"
+        class="text-xs font-mono space-y-0.5 max-h-96 overflow-y-auto bg-black/30 p-3 rounded border border-desert-gray">
         <div class="text-desert-gray italic">Loading backup history...</div>
       </div>
     </div>

@@ -1,0 +1,56 @@
+= NexSign Mini API Documentation
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== Introduction
+
+Welcome to the NexSign Mini (NSM) API documentation. This API allows you to manage hosts, perform health checks, and handle backups.
+
+== Hosts
+
+=== Get All Hosts
+
+[source,http]
+----
+GET /api/hosts
+----
+
+Returns a list of all managed hosts.
+
+=== Add Host
+
+[source,http]
+----
+POST /api/hosts/add
+Content-Type: application/json
+
+{
+  "nickname": "Lobby Display",
+  "ip_address": "192.168.1.10",
+  "vpn_ip_address": "10.8.0.10",
+  "notes": "Main entrance"
+}
+----
+
+Adds a new host to the inventory.
+
+== Backups
+
+=== List Backups
+
+[source,http]
+----
+GET /api/backups/list
+----
+
+Returns a list of available internal backups.
+
+=== Create Internal Backup
+
+[source,http]
+----
+POST /api/hosts/export/internal
+----
+
+Creates a new snapshot of the current host database.

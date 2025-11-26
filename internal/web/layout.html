@@ -7,9 +7,9 @@
     <title>nexSign mini Dashboard</title>
     <script type="module" src="/static/datastar.js"></script>
     <!-- Tailwind CSS standalone build -->
-    <script src="/static/tailwind.js"></script>
+    <script src="/static/tailwind.js?v={{.BuildTime}}"></script>
     <!-- Application JavaScript -->
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v={{.BuildTime}}"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -57,11 +57,16 @@
 
     <nav class="w-full bg-desert-darkgray border-b border-desert-gray h-14 px-4 flex items-center justify-evenly">
         <div class="breadcrumbs text-sm text-desert-yellow py-2 cursor-pointer align-items-start">
-            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/home')" onclick="onViewLoad('home')">Home</a> /
-            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/advanced')">Advanced</a> /
-            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/api')" onclick="onViewLoad('api')">API</a>
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/home')"
+                onclick="onViewLoad('home')">Home</a> /
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/advanced')"
+                onclick="onViewLoad('advanced')">Advanced</a> /
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/api')"
+                onclick="onViewLoad('api')">API</a> /
+            <a class="p-2 hover:text-desert-orange" data-on-click="@get('/views/docs')"
+                onclick="onViewLoad('docs')">Docs</a>
         </div>
-    <!-- Universal status bar for realtime messages -->
+        <!-- Universal status bar for realtime messages -->
         <div id="status-bar" class="flex items-center gap-3 px-4 py-2">
             <div class="text-xs text-center space-y-0.5 leading-tight">
                 <div id="status-msg-0" class="text-white"></div>
@@ -69,7 +74,7 @@
                 <div id="status-msg-2" class="text-desert-gray/40"></div>
             </div>
         </div>
-        <div class="text-xs text-desert-gray select-none">nexSign mini 
+        <div class="text-xs text-desert-gray select-none">nexSign mini
             <span class="text-xs font-normal text-desert-gray">v{{.CurrentVersion}}</span>
             <span class="text-desert-gray/60">(build-ts: {{.BuildTime}})</span>
         </div>
@@ -84,14 +89,14 @@
     <script>
         // Status bar message management
         const statusMessages = ['', '', ''];
-        
+
         function updateStatusBar(message) {
             if (!message) return;
-            
+
             // Shift messages down
             statusMessages.unshift(message);
             statusMessages.pop();
-            
+
             // Update DOM
             document.getElementById('status-msg-0').textContent = statusMessages[0];
             document.getElementById('status-msg-1').textContent = statusMessages[1];
@@ -102,32 +107,32 @@
         function connectStatusWS() {
             const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
             const ws = new WebSocket(proto + '://' + location.host + '/ws/status');
-            
+
             ws.onopen = () => {
                 updateStatusBar('Connected to status updates');
             };
-            
+
             ws.onmessage = (ev) => {
                 try {
                     const msg = JSON.parse(ev.data);
                     if (msg.text) {
                         updateStatusBar(msg.text);
                     }
-                } catch(e) {
+                } catch (e) {
                     console.error('Failed to parse status message:', e);
                 }
             };
-            
+
             ws.onclose = () => {
                 updateStatusBar('Disconnected from status updates. Reconnecting...');
                 setTimeout(connectStatusWS, 2000);
             };
-            
+
             ws.onerror = () => {
-                try { ws.close(); } catch(e) {}
+                try { ws.close(); } catch (e) { }
             };
         }
-        
+
         // Start status WebSocket connection
         connectStatusWS();
     </script>
